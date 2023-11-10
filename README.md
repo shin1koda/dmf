@@ -1,5 +1,5 @@
 # Direct MaxFlux method
-A python implementation of the direct MaxFlux method for transition state search
+A Python implementation of the direct MaxFlux method for transition state search
 
 example.py
 ```python
@@ -42,6 +42,13 @@ write('example_fin.traj',mxflx.images)
 # history of x(tmax)
 write('example_tmax.traj',mxflx.problem.history.images_tmax)
 ```
+
+## Requirements
+
+- NumPy
+- SciPy
+- [ASE](https://wiki.fysik.dtu.dk/ase/)
+- [cyipopt](https://cyipopt.readthedocs.io/en/stable/)
 
 ## Documentation
 
