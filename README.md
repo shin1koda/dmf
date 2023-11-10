@@ -59,4 +59,4 @@ Coming soon.
 Currently, the implementation is limited as described below. Additional features will be added in the future.
 
 - Only non-periodic systems are supported.
-- Only parallel energy/force evaluation by threading can be used.
+- Only parallel energy/force evaluation by threading can be used (MPI is not supported).
