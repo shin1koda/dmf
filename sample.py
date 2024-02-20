@@ -2,7 +2,7 @@ from ase.io import write, read
 from ase.calculators.emt import EMT
 from dmf import DirectMaxFlux
 
-ref_images = read('structures/idpp_emt.traj',index=':')
+ref_images = read('idpp_images.traj',index=':')
 
 mxflx = DirectMaxFlux(ref_images,nmove=3,
     adaptive_method='full_tmax',)
