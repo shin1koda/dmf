@@ -9,35 +9,42 @@ from scipy.interpolate import BSpline,interp1d
 from scipy.spatial.transform import Rotation
 import cyipopt
 
-#import ase.parallel
+import ase.parallel
 from ase.utils import lazyproperty
 
 
 class GeometricAction(ABC):
     def __init__(
             self,ref_images,coefs=None,
+            parallel=False,world=None,
+            remove_rotation_and_translation=True,
+            mass_weighted=False,
             nsegs=4,dspl=3,
             t_eval=None,w_eval=None,
             n_vel=None,n_trans=None,n_rot=None,
             eps_vel=0.01,eps_rot=0.01,
-            trans_rot=True,
-            parallel=False):
+            ):
 
         #Atoms
         self.ref_images = ref_images
         self.natoms = len(ref_images[0])
-        self.masses = ref_images[0].get_masses()
+        if mass_weighted:
+            self.masses = ref_images[0].get_masses()
+        else:
+            self.masses = np.ones(self.natoms)
         self.mass_fracs = self.masses/np.sum(self.masses)
-        self.atoms_react = ref_images[0].copy()
-        self.atoms_prod = ref_images[-1].copy()
 
         #Constraints
-        self.trans_rot = trans_rot
+        self.remove_rotation_and_translation = remove_rotation_and_translation
         self.eps_vel = eps_vel
         self.eps_rot = eps_rot
 
         #Prallel calculation
         self.parallel = parallel
+
+        if world is None:
+            world = ase.parallel.world
+        self.world = world
 
         #B-spline basis functions
         self.nsegs = nsegs
@@ -95,13 +102,11 @@ class GeometricAction(ABC):
         else:
             self.coefs = self.get_coefs_from_ref_images()
         self.coefs0 = self.coefs.copy()
-        self.atoms_react.set_positions(self.coefs[0])
-        self.atoms_prod.set_positions(self.coefs[-1])
 
         #Initialize images
         self.images=[]
         for _ in range(self.t_eval.size):
-            self.images.append(self.atoms_react.copy())
+            self.images.append(ref_images[0].copy())
         self.set_positions()
 
         #Jacobian of the translation constraints
@@ -134,10 +139,11 @@ class GeometricAction(ABC):
 
     def get_coefs_from_ref_images(self):
         #Translate and rotate ref_images
-        if self.trans_rot:
+        if self.remove_rotation_and_translation:
             prev_image = None
             for image in self.ref_images:
-                image.translate(-image.get_center_of_mass())
+                pos = image.get_positions()
+                image.translate(-self.mass_fracs@pos)
                 if prev_image is not None:
                     pos = image.get_positions()
                     prev_pos = prev_image.get_positions()
@@ -292,7 +298,7 @@ class GeometricAction(ABC):
 
         jac_coefs = aligned_jac[:,1:-1,:,:].reshape([nc,-1])
 
-        if self.trans_rot:
+        if self.remove_rotation_and_translation:
             jac_fin_rot = self.get_jac_fin_rot()
             jac_rot = np.tensordot(aligned_jac[:,-1,:,:],jac_fin_rot)
             return remove_axis(np.hstack([jac_coefs,jac_rot]))
@@ -306,12 +312,12 @@ class GeometricAction(ABC):
     def f_ends(self):
         forces = np.empty((2, self.natoms, 3))
         if not self.parallel:
-            forces[0]=self.atoms_react.get_forces()
-            forces[1]=self.atoms_prod.get_forces()
-        else:
+            forces[0]=self.images[0].get_forces()
+            forces[1]=self.images[-1].get_forces()
+        elif self.world.size==1:
             def run(image, forces):
                 forces[:] = image.get_forces()
-            images=[self.atoms_react,self.atoms_prod]
+            images=[self.images[0],self.images[-1]]
             threads = [threading.Thread(target=run,
                                         args=(images[i],
                                               forces[i:i+1]))
@@ -320,14 +326,34 @@ class GeometricAction(ABC):
                 thread.start()
             for thread in threads:
                 thread.join()
+        else:
+            if self.world.rank == 0:
+                forces[0]=self.images[0].get_forces()
+            elif self.world.rank == 1:
+                forces[1]=self.images[-1].get_forces()
+
+            self.world.broadcast(forces[0], 0)
+            self.world.broadcast(forces[1], 1)
+
         return forces
 
     @lazyproperty
     def e_ends(self):
         f=self.f_ends
-        e_react=self.atoms_react.get_potential_energy()
-        e_prod =self.atoms_prod.get_potential_energy()
-        return np.array([e_react,e_prod])
+        energies = np.empty(2)
+        if (not self.parallel) or self.world.size==1:
+            energies[0] = self.images[0].get_potential_energy()
+            energies[1] = self.images[-1].get_potential_energy()
+        else:
+            if self.world.rank == 0:
+                energies[0] = self.images[0].get_potential_energy()
+            elif self.world.rank == 1:
+                energies[1] = self.images[-1].get_potential_energy()
+
+            self.world.broadcast(energies[0:1], 0)
+            self.world.broadcast(energies[1:2], 1)
+
+        return energies
 
 
     @lazyproperty
@@ -335,7 +361,7 @@ class GeometricAction(ABC):
         return np.amin(self.e_ends)
 
     def get_forces(self):
-        eps_t=0.001
+        eps_t=0.01
         forces = np.empty([self.t_eval.size, self.natoms, 3])
         energies = np.empty(self.t_eval.size)
 
@@ -356,7 +382,8 @@ class GeometricAction(ABC):
             for i in inds:
                 forces[i] = self.images[i].get_forces()
                 energies[i] = self.images[i].get_potential_energy()
-        else:
+
+        elif self.world.size==1:
             def run(image, energies, forces):
                 forces[:] = image.get_forces()
                 energies[:] = image.get_potential_energy()
@@ -370,6 +397,20 @@ class GeometricAction(ABC):
                 thread.start()
             for thread in threads:
                 thread.join()
+
+        else:
+            for k in range(len(inds)):
+                if k % self.world.size == self.world.rank:
+                    i = inds[k]
+                    forces[i] = self.images[i].get_forces()
+                    energies[i] = self.images[i].get_potential_energy()
+
+            for k in range(len(inds)):
+                root = k % self.world.size
+                i = inds[k]
+                self.world.broadcast(energies[i:i+1], root)
+                self.world.broadcast(forces[i], root)
+
 
         self.energies = energies
         self.forces = forces
@@ -534,6 +575,10 @@ class GeometricAction(ABC):
             'output_file':'dmf.out',
             }
 
+        if self.parallel and self.world.size>1:
+            if self.world.rank > 0:
+                defaults['print_level'] = 0
+
         o={**defaults,**options}
         self.problem.add_options(o)
         self.problem.options = o
@@ -557,7 +602,8 @@ class DirectMaxFlux(GeometricAction):
         di1 = 0.2,
         mu1 = 5.0,
         g1  = 0.98,
-        adaptive_method=None,
+        update_teval = False,
+        adaptive_method = None,
         nmove = 5,
         **kwargs):
 
@@ -572,9 +618,13 @@ class DirectMaxFlux(GeometricAction):
         self.mu1 = mu1
         self.g1  = g1
 
-        self.adaptive_method=adaptive_method
+        self.update_teval = update_teval
+        if adaptive_method == 'full_tmax':
+            self.update_teval = True
+
         self.nmove = nmove
-        if self.adaptive_method=='full_tmax':
+
+        if self.update_teval:
             super().__init__(
                 ref_images,
                 t_eval=np.linspace(0.0,1.0,nmove+2),
@@ -632,7 +682,7 @@ class GeoActProblem(cyipopt.Problem):
 
         nvar = (dga.nbasis-2)*3*dga.natoms
         self.nc = nvar
-        if dga.trans_rot:
+        if dga.remove_rotation_and_translation:
             nvar += 3
 
         self.var_scales = 1.0
@@ -641,7 +691,7 @@ class GeoActProblem(cyipopt.Problem):
         cl = np.full(m_vel,1.0-dga.eps_vel)
         cu = np.full(m_vel,1.0+dga.eps_vel)
 
-        if dga.trans_rot:
+        if dga.remove_rotation_and_translation:
             cl_trans=np.zeros(3*dga.t_trans.size)
             cu_trans=np.zeros(3*dga.t_trans.size)
             m_rot = 3*(dga.t_rot.size-1)
@@ -685,7 +735,7 @@ class GeoActProblem(cyipopt.Problem):
 
     def get_x(self):
         x = self.dga.coefs[1:-1].flatten()
-        if self.dga.trans_rot:
+        if self.dga.remove_rotation_and_translation:
             x = np.hstack([x,self.dga.angs])
         return x/self.var_scales
 
@@ -694,7 +744,7 @@ class GeoActProblem(cyipopt.Problem):
         y = x*self.var_scales
         coefs[1:-1] = y[:self.nc].reshape((-1,self.dga.natoms,3))
         angs = np.zeros(3)
-        if self.dga.trans_rot:
+        if self.dga.remove_rotation_and_translation:
             angs = y[self.nc:self.nc+3]
 
         self.dga.set_positions(coefs,angs)
@@ -712,7 +762,7 @@ class GeoActProblem(cyipopt.Problem):
     def constraints(self,x):
         self.set_x(x)
         c_list = [self.dga.get_consts_vel()]
-        if self.dga.trans_rot:
+        if self.dga.remove_rotation_and_translation:
             c_list.append(self.dga.get_consts_trans())
             c_list.append(self.dga.get_consts_rot())
         return self.dga.reshape_consts(c_list)
@@ -720,7 +770,7 @@ class GeoActProblem(cyipopt.Problem):
     def jacobian(self,x):
         self.set_x(x)
         j_list = [self.dga.get_jac_vel()]
-        if self.dga.trans_rot:
+        if self.dga.remove_rotation_and_translation:
             j_list.append(self.dga.get_jac_trans())
             j_list.append(self.dga.get_jac_rot())
         return self.dga.reshape_jacs(j_list)*self.var_scales
@@ -743,7 +793,7 @@ class GeoActProblem(cyipopt.Problem):
 
         P_tmax = np.array(
             [b(tmax) for b in self.dga.basis[0]])
-        image_tmax = self.dga.atoms_react.copy()
+        image_tmax = self.dga.images[0].copy()
         image_tmax.set_positions(
             np.tensordot(P_tmax,self.dga.coefs,1))
         self.history.tmax.append(tmax)
@@ -755,7 +805,7 @@ class GeoActProblem(cyipopt.Problem):
                     image.calc = image.calc1
 
         if self.dga.is_dmf:
-            if self.dga.adaptive_method=='full_tmax':
+            if self.dga.update_teval:
                 un_di = inf_du \
                     /self.options['obj_scaling_factor'] \
                     /np.amax(self.var_scales)
