@@ -1,7 +1,7 @@
 # Direct MaxFlux method
 A Python implementation of the direct MaxFlux method for transition state search
 
-example.py
+sample.py
 ```python
 from ase.io import write, read
 from ase.calculators.emt import EMT
