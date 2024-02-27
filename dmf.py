@@ -14,6 +14,31 @@ from ase.utils import lazyproperty
 
 
 class GeometricAction(ABC):
+    """Class for general variational reaction path optimization.
+
+    This class defines vaiational problems with the objective functional
+    I[x(t)] = \int^{1}_{0} dt |v(t)| F(x(t)).
+
+    Attributes:
+        images (list of ase.Atoms):
+        problem (GeomActProblem):
+        coefs (numpy.ndarray):
+        angs (numpy.ndarray):
+        t_eval (numpy.ndarray):
+        w_eval (numpy.ndarray):
+        energies (numpy.ndarray):
+        forces (numpy.ndarray):
+        remove_rotation_and_translation (bool):
+        natoms (int):
+        nsegs (int):
+        dspl (int):
+        nbasis (int):
+        n_vel (int):
+        n_trans (int):
+        n_rot (int):
+        eps_vel (float):
+        eps_rot (float):
+    """
     def __init__(
             self,ref_images,coefs=None,
             parallel=False,world=None,
@@ -26,16 +51,17 @@ class GeometricAction(ABC):
             ):
 
         #Atoms
-        self.ref_images = ref_images
+        #self.ref_images = ref_images
         self.natoms = len(ref_images[0])
         if mass_weighted:
-            self.masses = ref_images[0].get_masses()
+            self._masses = ref_images[0].get_masses()
         else:
-            self.masses = np.ones(self.natoms)
-        self.mass_fracs = self.masses/np.sum(self.masses)
+            self._masses = np.ones(self.natoms)
+        self._mass_fracs = self._masses/np.sum(self._masses)
 
         #Constraints
-        self.remove_rotation_and_translation = remove_rotation_and_translation
+        self.remove_rotation_and_translation \
+            = remove_rotation_and_translation
         self.eps_vel = eps_vel
         self.eps_rot = eps_rot
 
@@ -44,23 +70,23 @@ class GeometricAction(ABC):
 
         if world is None:
             world = ase.parallel.world
-        self.world = world
+        self._world = world
 
         #B-spline basis functions
         self.nsegs = nsegs
         self.dspl = dspl
         self.nbasis = nsegs + dspl
-        t_knot = np.concatenate([
+        _t_knot = np.concatenate([
             np.zeros(dspl),
             np.linspace(0.0,1.0,nsegs+1),
             np.ones(dspl)])
-        self.t_knot = t_knot
+        self._t_knot = _t_knot
         basis = [
-            BSpline(t_knot, np.identity(self.nbasis)[i], dspl)
+            BSpline(_t_knot, np.identity(self.nbasis)[i], dspl)
             for i in range(self.nbasis)]
         d1basis = [b.derivative(nu=1) for b in basis]
         d2basis = [b.derivative(nu=2) for b in basis]
-        self.basis = [basis,d1basis,d2basis]
+        self._basis = [basis,d1basis,d2basis]
 
         #t-sequences
         if t_eval is None:
@@ -89,10 +115,10 @@ class GeometricAction(ABC):
         self.t_rot = np.linspace(0.0,1.0,self.n_rot+1)
 
         #Basis values: [derivative order, basis, t]
-        self.P_eval = self.get_basis_values(self.t_eval)
-        self.P_vel = self.get_basis_values(self.t_vel)
-        self.P_trans = self.get_basis_values(self.t_trans)
-        self.P_rot = self.get_basis_values(self.t_rot)
+        self._P_eval = self._get_basis_values(self.t_eval)
+        self._P_vel = self._get_basis_values(self.t_vel)
+        self._P_trans = self._get_basis_values(self.t_trans)
+        self._P_rot = self._get_basis_values(self.t_rot)
 
         #Coefficients: [basis, atoms, xyz]
         self.coefs = np.empty([self.nbasis, self.natoms, 3])
@@ -100,8 +126,8 @@ class GeometricAction(ABC):
         if coefs is not None:
             self.coefs = coefs
         else:
-            self.coefs = self.get_coefs_from_ref_images()
-        self.coefs0 = self.coefs.copy()
+            self.coefs = self._get_coefs_from_ref_images(ref_images)
+        self._coefs0 = self.coefs.copy()
 
         #Initialize images
         self.images=[]
@@ -110,22 +136,22 @@ class GeometricAction(ABC):
         self.set_positions()
 
         #Jacobian of the translation constraints
-        self.jac_trans = np.einsum(
-            'a,bi,st->isbat',self.mass_fracs,
-            self.P_trans[0],np.identity(3))
+        self._jac_trans = np.einsum(
+            'a,bi,st->isbat',self._mass_fracs,
+            self._P_trans[0],np.identity(3))
 
         self.forces = None
         self.energies = None
 
-    def get_basis_values(self,t_seq):
+    def _get_basis_values(self,t_seq):
         return np.array([[[
             b(t) for t in t_seq]
-            for b in self.basis[nu]]
+            for b in self._basis[nu]]
             for nu in range(3)])
 
     def set_t_eval(self,t_eval):
         self.t_eval = t_eval
-        self.P_eval = self.get_basis_values(self.t_eval)
+        self._P_eval = self._get_basis_values(self.t_eval)
 
     def set_w_eval(self,w_eval=None):
         if w_eval is not None:
@@ -137,35 +163,36 @@ class GeometricAction(ABC):
             w[1:-1] = 0.5*(self.t_eval[2:]-self.t_eval[:-2])
             self.w_eval = w
 
-    def get_coefs_from_ref_images(self):
+    def _get_coefs_from_ref_images(self,ref_images):
+        ref_images_copy = [image.copy() for image in ref_images]
         #Translate and rotate ref_images
         if self.remove_rotation_and_translation:
             prev_image = None
-            for image in self.ref_images:
+            for image in ref_images_copy:
                 pos = image.get_positions()
-                image.translate(-self.mass_fracs@pos)
+                image.translate(-self._mass_fracs@pos)
                 if prev_image is not None:
                     pos = image.get_positions()
                     prev_pos = prev_image.get_positions()
                     r = Rotation.align_vectors(
-                        prev_pos,pos,weights=self.masses)[0]
+                        prev_pos,pos,weights=self._masses)[0]
                     image.set_positions(r.apply(pos))
                 prev_image = image
 
-        nimages = len(self.ref_images)
+        nimages = len(ref_images_copy)
         pos_ref = np.empty([nimages, self.natoms, 3])
         t_ref = np.zeros(nimages)
-        for i,image in enumerate(self.ref_images):
+        for i,image in enumerate(ref_images_copy):
             pos_ref[i] = image.get_positions()
         diff = pos_ref[1:] - pos_ref[:-1]
         l = np.sqrt(
-            (self.masses[None,:,None]*diff**2).sum(axis=(1,2)))
+            (self._masses[None,:,None]*diff**2).sum(axis=(1,2)))
         t_ref[1:] = np.cumsum(l)/np.sum(l)
 
         f = interp1d(t_ref,pos_ref,axis=0)
         t_ref_interp = np.linspace(0.0,1.0,4*self.nsegs+1)[1:-1]
         pos_ref_interp = f(t_ref_interp)
-        P_ref_interp0 = self.get_basis_values(t_ref_interp)[0]
+        P_ref_interp0 = self._get_basis_values(t_ref_interp)[0]
 
         #Solving least-square equations
         A = np.matmul(P_ref_interp0[1:-1],P_ref_interp0[1:-1].T)
@@ -187,7 +214,7 @@ class GeometricAction(ABC):
         else:
             t_temp = t
         if P is None:
-            P_temp = self.get_basis_values(t_temp)
+            P_temp = self._get_basis_values(t_temp)
         else:
             P_temp = P
         return np.tensordot(P_temp[nu].T,self.coefs,1)
@@ -197,10 +224,10 @@ class GeometricAction(ABC):
             self.coefs=coefs
         if angs is not None:
             self.angs = angs
-        R=self.get_rot_mats()
-        self.coefs[-1]=self.coefs0[-1]@R[0]@R[1]@R[2]
+        R=self._get_rot_mats()
+        self.coefs[-1]=self._coefs0[-1]@R[0]@R[1]@R[2]
 
-    def get_rot_mats(self):
+    def _get_rot_mats(self):
         R=np.zeros([3,3,3])
         for i in range(3):
             j=(i+1)%3
@@ -218,53 +245,53 @@ class GeometricAction(ABC):
         for i in range(self.t_eval.size):
             self.images[i].set_positions(pos[i])
 
-    def get_consts_trans(self):
-        pos = self.get_positions(P=self.P_trans)
-        return self.mass_fracs@pos
+    def _get_consts_trans(self):
+        pos = self.get_positions(P=self._P_trans)
+        return self._mass_fracs@pos
 
-    def get_jac_trans(self):
-        return self.jac_trans
+    def _get_jac_trans(self):
+        return self._jac_trans
 
-    def get_consts_rot(self):
-        pos = self.get_positions(P=self.P_rot)
-        return self.mass_fracs@np.cross(pos[:-1],pos[1:])
+    def _get_consts_rot(self):
+        pos = self.get_positions(P=self._P_rot)
+        return self._mass_fracs@np.cross(pos[:-1],pos[1:])
 
-    def get_jac_rot(self):
-        pos = self.get_positions(P=self.P_rot)
+    def _get_jac_rot(self):
+        pos = self.get_positions(P=self._P_rot)
         y = np.cross(np.identity(3),pos[...,None,:])
         jac_rot = \
             np.einsum(
                 'a,bi,iats->isbat',
-                self.mass_fracs,
-                self.P_rot[0,:,:-1],
+                self._mass_fracs,
+                self._P_rot[0,:,:-1],
                 y[1:]) \
             - np.einsum(
                 'a,bi,iats->isbat',
-                self.mass_fracs,
-                self.P_rot[0,:,1:],
+                self._mass_fracs,
+                self._P_rot[0,:,1:],
                 y[:-1])
         return jac_rot
 
-    def get_consts_vel(self):
-        pos = self.get_positions(P=self.P_vel)
+    def _get_consts_vel(self):
+        pos = self.get_positions(P=self._P_vel)
         diffs = pos[1:]-pos[:-1]
-        d2s = (self.masses[None,:,None]*diffs**2).sum(axis=(1,2))
+        d2s = (self._masses[None,:,None]*diffs**2).sum(axis=(1,2))
         return d2s/np.average(d2s)
 
-    def get_jac_vel(self):
-        pos = self.get_positions(P=self.P_vel)
+    def _get_jac_vel(self):
+        pos = self.get_positions(P=self._P_vel)
         diffs = pos[1:]-pos[:-1]
-        d2s = (self.masses[None,:,None]*diffs**2).sum(axis=(1,2))
-        diff_P = self.P_vel[0,:,1:]-self.P_vel[0,:,:-1]
+        d2s = (self._masses[None,:,None]*diffs**2).sum(axis=(1,2))
+        diff_P = self._P_vel[0,:,1:]-self._P_vel[0,:,:-1]
         jac_d2s = 2.0*np.einsum(
             'a,bi,ias->ibas',
-            self.masses,diff_P,diffs)
+            self._masses,diff_P,diffs)
         ave_d2s = np.average(d2s)
         return jac_d2s/ave_d2s \
             - np.tensordot(d2s,np.average(jac_d2s,axis=0),0)/(ave_d2s)**2
 
-    def get_jac_fin_rot(self):
-        R=self.get_rot_mats()
+    def _get_jac_fin_rot(self):
+        R=self._get_rot_mats()
 
         dR=np.zeros([3,3,3])
         for i in range(3):
@@ -276,13 +303,13 @@ class GeometricAction(ABC):
             dR[i,k,k]=-np.sin(self.angs[i])
 
         jac_rot = np.empty([self.natoms,3,3])
-        jac_rot[...,0] = self.coefs0[-1]@dR[0]@R[1]@R[2]
-        jac_rot[...,1] = self.coefs0[-1]@R[0]@dR[1]@R[2]
-        jac_rot[...,2] = self.coefs0[-1]@R[0]@R[1]@dR[2]
+        jac_rot[...,0] = self._coefs0[-1]@dR[0]@R[1]@R[2]
+        jac_rot[...,1] = self._coefs0[-1]@R[0]@dR[1]@R[2]
+        jac_rot[...,2] = self._coefs0[-1]@R[0]@R[1]@dR[2]
 
         return jac_rot
 
-    def reshape_jacs(self,jacs):
+    def _reshape_jacs(self,jacs):
 
         def remove_axis(jac):
             if len(jac)==1:
@@ -299,22 +326,22 @@ class GeometricAction(ABC):
         jac_coefs = aligned_jac[:,1:-1,:,:].reshape([nc,-1])
 
         if self.remove_rotation_and_translation:
-            jac_fin_rot = self.get_jac_fin_rot()
+            jac_fin_rot = self._get_jac_fin_rot()
             jac_rot = np.tensordot(aligned_jac[:,-1,:,:],jac_fin_rot)
             return remove_axis(np.hstack([jac_coefs,jac_rot]))
         else:
             return remove_axis(jac_coefs)
 
-    def reshape_consts(self,consts):
+    def _reshape_consts(self,consts):
         return np.hstack([np.ravel(c) for c in consts])
 
     @lazyproperty
-    def f_ends(self):
+    def _f_ends(self):
         forces = np.empty((2, self.natoms, 3))
         if not self.parallel:
             forces[0]=self.images[0].get_forces()
             forces[1]=self.images[-1].get_forces()
-        elif self.world.size==1:
+        elif self._world.size==1:
             def run(image, forces):
                 forces[:] = image.get_forces()
             images=[self.images[0],self.images[-1]]
@@ -327,38 +354,38 @@ class GeometricAction(ABC):
             for thread in threads:
                 thread.join()
         else:
-            if self.world.rank == 0:
+            if self._world.rank == 0:
                 forces[0]=self.images[0].get_forces()
-            elif self.world.rank == 1:
+            elif self._world.rank == 1:
                 forces[1]=self.images[-1].get_forces()
 
-            self.world.broadcast(forces[0], 0)
-            self.world.broadcast(forces[1], 1)
+            self._world.broadcast(forces[0], 0)
+            self._world.broadcast(forces[1], 1)
 
         return forces
 
     @lazyproperty
-    def e_ends(self):
-        f=self.f_ends
+    def _e_ends(self):
+        f=self._f_ends
         energies = np.empty(2)
-        if (not self.parallel) or self.world.size==1:
+        if (not self.parallel) or self._world.size==1:
             energies[0] = self.images[0].get_potential_energy()
             energies[1] = self.images[-1].get_potential_energy()
         else:
-            if self.world.rank == 0:
+            if self._world.rank == 0:
                 energies[0] = self.images[0].get_potential_energy()
-            elif self.world.rank == 1:
+            elif self._world.rank == 1:
                 energies[1] = self.images[-1].get_potential_energy()
 
-            self.world.broadcast(energies[0:1], 0)
-            self.world.broadcast(energies[1:2], 1)
+            self._world.broadcast(energies[0:1], 0)
+            self._world.broadcast(energies[1:2], 1)
 
         return energies
 
 
     @lazyproperty
     def e0(self):
-        return np.amin(self.e_ends)
+        return np.amin(self._e_ends)
 
     def get_forces(self):
         eps_t=0.01
@@ -368,13 +395,13 @@ class GeometricAction(ABC):
         inds=[]
         for i in range(self.t_eval.size):
             if self.t_eval[i]<eps_t:
-                forces[i] = self.f_ends[0]
-                energies[i] = self.e_ends[0]
+                forces[i] = self._f_ends[0]
+                energies[i] = self._e_ends[0]
             elif self.t_eval[i]>1.0-eps_t:
-                R=self.get_rot_mats()
-                f = self.f_ends[1]
+                R=self._get_rot_mats()
+                f = self._f_ends[1]
                 forces[i] = f@R[0]@R[1]@R[2]
-                energies[i] = self.e_ends[1]
+                energies[i] = self._e_ends[1]
             else:
                 inds.append(i)
 
@@ -383,7 +410,7 @@ class GeometricAction(ABC):
                 forces[i] = self.images[i].get_forces()
                 energies[i] = self.images[i].get_potential_energy()
 
-        elif self.world.size==1:
+        elif self._world.size==1:
             def run(image, energies, forces):
                 forces[:] = image.get_forces()
                 energies[:] = image.get_potential_energy()
@@ -400,16 +427,16 @@ class GeometricAction(ABC):
 
         else:
             for k in range(len(inds)):
-                if k % self.world.size == self.world.rank:
+                if k % self._world.size == self._world.rank:
                     i = inds[k]
                     forces[i] = self.images[i].get_forces()
                     energies[i] = self.images[i].get_potential_energy()
 
             for k in range(len(inds)):
-                root = k % self.world.size
+                root = k % self._world.size
                 i = inds[k]
-                self.world.broadcast(energies[i:i+1], root)
-                self.world.broadcast(forces[i], root)
+                self._world.broadcast(energies[i:i+1], root)
+                self._world.broadcast(forces[i], root)
 
 
         self.energies = energies
@@ -418,23 +445,23 @@ class GeometricAction(ABC):
         return forces
 
     @abstractmethod
-    def get_objective(self):
+    def _get_objective(self):
         pass
 
     @abstractmethod
-    def get_grad_objective(self):
+    def _get_grad_objective(self):
         pass
 
     @abstractmethod
-    def get_func_en(self,en):
+    def _get_func_en(self,en):
         pass
 
-    def get_norm_vels(self,nu=0):
-        pos = self.get_positions(P=self.P_vel)
+    def _get_norm_vels(self,nu=0):
+        pos = self.get_positions(P=self._P_vel)
         diffs = pos[1:]-pos[:-1]
 
         norm_dx = np.sqrt(
-            np.sum(self.masses[None,:,None]*diffs**2,axis=(1,2)))
+            np.sum(self._masses[None,:,None]*diffs**2,axis=(1,2)))
         dt = self.t_vel[1:]-self.t_vel[:-1]
 
         t_fd_vel = np.zeros(self.t_vel.size+1)
@@ -450,12 +477,12 @@ class GeometricAction(ABC):
             f = interp1d(t_fd_vel,fd_vels)
             return f(self.t_eval)
         else:
-            diff_P_vel0 = self.P_vel[0,:,1:]-self.P_vel[0,:,:-1]
+            diff_P_vel0 = self._P_vel[0,:,1:]-self._P_vel[0,:,:-1]
             grad_norm_vel = np.einsum(
                 'i,bi,a,ias->ibas',
                 1.0/(dt*norm_dx),
                 diff_P_vel0,
-                self.masses,
+                self._masses,
                 diffs)
             grad_fd_vels = np.zeros(
                 [self.t_vel.size+1,self.nbasis,self.natoms,3])
@@ -466,29 +493,29 @@ class GeometricAction(ABC):
             f = interp1d(t_fd_vel,grad_fd_vels,axis=0)
             return f(self.t_eval)
 
-    def get_action(self):
+    def _get_action(self):
 
         self.set_positions()
         self.get_forces()
 
-        norm_vels = self.get_norm_vels()
-        fe,dfe = self.get_func_en(self.energies)
+        norm_vels = self._get_norm_vels()
+        fe,dfe = self._get_func_en(self.energies)
         action = np.sum(self.w_eval*norm_vels*fe)
 
         return action
 
-    def get_grad_action(self):
+    def _get_grad_action(self):
 
         self.set_positions()
         self.get_forces()
 
-        fe,dfe = self.get_func_en(self.energies)
-        norm_vels = self.get_norm_vels()
-        grad_norm_vels = self.get_norm_vels(nu=1)
+        fe,dfe = self._get_func_en(self.energies)
+        norm_vels = self._get_norm_vels()
+        grad_norm_vels = self._get_norm_vels(nu=1)
 
         grad_action = np.tensordot(self.w_eval*fe,grad_norm_vels,1) \
             - np.tensordot(
-                self.P_eval[0]*self.w_eval*norm_vels*dfe,
+                self._P_eval[0]*self.w_eval*norm_vels*dfe,
                 self.forces,1)
 
         return grad_action
@@ -513,7 +540,7 @@ class GeometricAction(ABC):
         if coefs is None:
             coefs = self.coefs
 
-        P_eval1 = self.get_basis_values(t_eval)[1]
+        P_eval1 = self._get_basis_values(t_eval)[1]
         d_energies = -np.einsum(
             'bi,bas,ias->i',
             P_eval1, coefs, forces)
@@ -575,8 +602,8 @@ class GeometricAction(ABC):
             'output_file':'dmf.out',
             }
 
-        if self.parallel and self.world.size>1:
-            if self.world.rank > 0:
+        if self.parallel and self._world.size>1:
+            if self._world.rank > 0:
                 defaults['print_level'] = 0
 
         o={**defaults,**options}
@@ -637,37 +664,15 @@ class DirectMaxFlux(GeometricAction):
         self.energies -= self.e0
         return self.forces
 
-    def get_objective(self):
-        return np.log(self.get_action())/self.beta
+    def _get_objective(self):
+        return np.log(self._get_action())/self.beta
 
-    def get_grad_objective(self):
-        return self.get_grad_action()/self.get_action()/self.beta
+    def _get_grad_objective(self):
+        return self._get_grad_action()/self._get_action()/self.beta
 
-    def get_func_en(self,en):
+    def _get_func_en(self,en):
         return np.exp(self.beta*en),self.beta*np.exp(self.beta*en)
 
-class DirectElasticBand(GeometricAction):
-
-    def __init__( self, ref_images, **kwargs):
-
-        super().__init__(ref_images,**kwargs)
-
-        d = self.images[0].get_positions() - self.images[-1].get_positions()
-        self.length = np.sqrt(np.sum(d**2 * self.masses[:,None]))
-
-    def get_forces(self):
-        super().get_forces()
-        self.energies -= self.e0
-        return self.forces
-
-    def get_objective(self):
-        return self.get_action()/self.length
-
-    def get_grad_objective(self):
-        return self.get_grad_action()/self.length
-
-    def get_func_en(self,en):
-        return np.where(en>0.0,en,0.0), np.where(en>0.0,1.0,0.0)
 
 
 class GeoActProblem(cyipopt.Problem):
@@ -722,16 +727,14 @@ class GeoActProblem(cyipopt.Problem):
             self.images_tmax=[]
             self.beta=[]
             self.weval=[]
-            self.teval0=[]
-            self.weval0=[]
             self.duals=[]
 
     def add_options(self,dict_options):
         for item in dict_options.items():
             self.add_option(*item)
 
-    def add_var_scales(self,var_scales):
-        self.var_scales = var_scales
+    #def add_var_scales(self,var_scales):
+    #    self.var_scales = var_scales
 
     def get_x(self):
         x = self.dga.coefs[1:-1].flatten()
@@ -740,7 +743,7 @@ class GeoActProblem(cyipopt.Problem):
         return x/self.var_scales
 
     def set_x(self,x):
-        coefs = self.dga.coefs0.copy()
+        coefs = self.dga._coefs0.copy()
         y = x*self.var_scales
         coefs[1:-1] = y[:self.nc].reshape((-1,self.dga.natoms,3))
         angs = np.zeros(3)
@@ -751,29 +754,29 @@ class GeoActProblem(cyipopt.Problem):
 
     def objective(self, x):
         self.set_x(x)
-        return self.dga.get_objective()
+        return self.dga._get_objective()
 
     def gradient(self,x):
         self.set_x(x)
-        grad = self.dga.reshape_jacs(
-            [self.dga.get_grad_objective()])
+        grad = self.dga._reshape_jacs(
+            [self.dga._get_grad_objective()])
         return grad*self.var_scales
 
     def constraints(self,x):
         self.set_x(x)
-        c_list = [self.dga.get_consts_vel()]
+        c_list = [self.dga._get_consts_vel()]
         if self.dga.remove_rotation_and_translation:
-            c_list.append(self.dga.get_consts_trans())
-            c_list.append(self.dga.get_consts_rot())
-        return self.dga.reshape_consts(c_list)
+            c_list.append(self.dga._get_consts_trans())
+            c_list.append(self.dga._get_consts_rot())
+        return self.dga._reshape_consts(c_list)
 
     def jacobian(self,x):
         self.set_x(x)
-        j_list = [self.dga.get_jac_vel()]
+        j_list = [self.dga._get_jac_vel()]
         if self.dga.remove_rotation_and_translation:
-            j_list.append(self.dga.get_jac_trans())
-            j_list.append(self.dga.get_jac_rot())
-        return self.dga.reshape_jacs(j_list)*self.var_scales
+            j_list.append(self.dga._get_jac_trans())
+            j_list.append(self.dga._get_jac_rot())
+        return self.dga._reshape_jacs(j_list)*self.var_scales
 
     def intermediate(self, alg_mod, iter_count, obj_value,
                      inf_pr, inf_du, mu, d_norm, regularization_size,
@@ -792,7 +795,7 @@ class GeoActProblem(cyipopt.Problem):
         polys,tmax,emax_interp = self.dga.interpolate_energies()
 
         P_tmax = np.array(
-            [b(tmax) for b in self.dga.basis[0]])
+            [b(tmax) for b in self.dga._basis[0]])
         image_tmax = self.dga.images[0].copy()
         image_tmax.set_positions(
             np.tensordot(P_tmax,self.dga.coefs,1))
@@ -823,7 +826,7 @@ class GeoActProblem(cyipopt.Problem):
                 c1  = 0.5*(1.0-g1)*np.tanh( 2.0*mu1*(un_di-di1)) + 0.5*(1.0+g1)
 
                 nmove = self.dga.nmove
-                barrier = emax_interp - np.amax(self.dga.e_ends)\
+                barrier = emax_interp - np.amax(self.dga._e_ends)\
                     +self.dga.e0
                 de = min(2.0/float(nmove+1)*barrier,de)
                 delta_e = de*np.arange(0.5*(nmove%2+1.0),0.5*(nmove+1.0),1.0)
