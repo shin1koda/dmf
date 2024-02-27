@@ -13,7 +13,7 @@ import ase.parallel
 from ase.utils import lazyproperty
 
 
-class GeometricAction(ABC):
+class GeometricAction(ABC,cyipopt.Problem):
     """Class for general variational reaction path optimization.
 
     This class defines vaiational problems with the objective functional
@@ -142,6 +142,72 @@ class GeometricAction(ABC):
 
         self.forces = None
         self.energies = None
+
+        self.history = self.History()
+
+        #initialize cyipopt.Problem
+        nvar = (self.nbasis-2)*3*self.natoms
+        self.nc = nvar
+        if self.remove_rotation_and_translation:
+            nvar += 3
+
+        self.var_scales = 1.0
+
+        m_vel = self.t_vel.size-1
+        cl = np.full(m_vel,1.0-self.eps_vel)
+        cu = np.full(m_vel,1.0+self.eps_vel)
+
+        if self.remove_rotation_and_translation:
+            cl_trans=np.zeros(3*self.t_trans.size)
+            cu_trans=np.zeros(3*self.t_trans.size)
+            m_rot = 3*(self.t_rot.size-1)
+            cl_rot=np.full(m_rot,-self.eps_rot)
+            cu_rot=np.full(m_rot, self.eps_rot)
+
+            cl = np.hstack([cl,cl_trans,cl_rot])
+            cu = np.hstack([cu,cu_trans,cu_rot])
+
+        lb = np.full(nvar,-2.0e19)
+        ub = np.full(nvar, 2.0e19)
+
+        cyipopt.Problem.__init__(self,
+            n=nvar, m=len(cl),
+            lb=lb, ub=ub,
+            cl=cl, cu=cu,)
+
+        #set ipopt options
+        defaults ={
+            'tol': 1.0,
+            'dual_inf_tol': 0.04,
+            'constr_viol_tol': 0.01,
+            'compl_inf_tol': 0.01,
+            'nlp_scaling_method':'user-scaling',
+            'obj_scaling_factor':0.1,
+            'limited_memory_initialization':'constant',
+            'limited_memory_init_val':2.5,
+            'accept_every_trial_step':'yes',
+            'output_file':'dmf.out',
+            }
+
+        if self.parallel and self._world.size>1:
+            if self._world.rank > 0:
+                defaults['print_level'] = 0
+
+        self.ipopt_options = dict()
+        self.add_ipopt_options(defaults)
+
+    class History():
+        def __init__(self):
+            self.forces=[]
+            self.energies=[]
+            self.coefs=[]
+            self.angs=[]
+            self.teval=[]
+            self.tmax=[]
+            self.images_tmax=[]
+            self.beta=[]
+            self.weval=[]
+            self.duals=[]
 
     def _get_basis_values(self,t_seq):
         return np.array([[[
@@ -587,33 +653,127 @@ class GeometricAction(ABC):
 
         return polys,tmax,emax
 
-    def create_problem(self,options={}):
-        self.problem = GeoActProblem(self)
-        defaults ={
-            'tol': 1.0,
-            'dual_inf_tol': 0.04,
-            'constr_viol_tol': 0.01,
-            'compl_inf_tol': 0.01,
-            'nlp_scaling_method':'user-scaling',
-            'obj_scaling_factor':0.1,
-            'limited_memory_initialization':'constant',
-            'limited_memory_init_val':2.5,
-            'accept_every_trial_step':'yes',
-            'output_file':'dmf.out',
-            }
+    def solve(self):
+        x0 = self.get_x()
+        x,info = super().solve(x0)
+        self.set_x(x)
+        return x,info
 
-        if self.parallel and self._world.size>1:
-            if self._world.rank > 0:
-                defaults['print_level'] = 0
 
-        o={**defaults,**options}
-        self.problem.add_options(o)
-        self.problem.options = o
+    def add_ipopt_options(self,dict_options):
+        self.ipopt_options.update(dict_options)
+        for item in self.ipopt_options.items():
+            self.add_option(*item)
 
-    def solve_problem(self):
-        x0 = self.problem.get_x()
-        x,info = self.problem.solve(x0)
-        self.problem.set_x(x)
+    def get_x(self):
+        x = self.coefs[1:-1].flatten()
+        if self.remove_rotation_and_translation:
+            x = np.hstack([x,self.angs])
+        return x/self.var_scales
+
+    def set_x(self,x):
+        coefs = self._coefs0.copy()
+        y = x*self.var_scales
+        coefs[1:-1] = y[:self.nc].reshape((-1,self.natoms,3))
+        angs = np.zeros(3)
+        if self.remove_rotation_and_translation:
+            angs = y[self.nc:self.nc+3]
+
+        self.set_positions(coefs,angs)
+
+    def objective(self, x):
+        self.set_x(x)
+        return self._get_objective()
+
+    def gradient(self,x):
+        self.set_x(x)
+        grad = self._reshape_jacs(
+            [self._get_grad_objective()])
+        return grad*self.var_scales
+
+    def constraints(self,x):
+        self.set_x(x)
+        c_list = [self._get_consts_vel()]
+        if self.remove_rotation_and_translation:
+            c_list.append(self._get_consts_trans())
+            c_list.append(self._get_consts_rot())
+        return self._reshape_consts(c_list)
+
+    def jacobian(self,x):
+        self.set_x(x)
+        j_list = [self._get_jac_vel()]
+        if self.remove_rotation_and_translation:
+            j_list.append(self._get_jac_trans())
+            j_list.append(self._get_jac_rot())
+        return self._reshape_jacs(j_list)*self.var_scales
+
+    def intermediate(self, alg_mod, iter_count, obj_value,
+                     inf_pr, inf_du, mu, d_norm, regularization_size,
+                     alpha_du, alpha_pr, ls_trials):
+
+        self.history.forces.append(self.forces)
+        self.history.energies.append(self.energies)
+        self.history.coefs.append(self.coefs)
+        self.history.angs.append(self.angs)
+        self.history.teval.append(self.t_eval)
+        self.history.weval.append(self.w_eval)
+        if hasattr(self,'beta'):
+            self.history.beta.append(self.beta)
+        self.history.duals.append(inf_du)
+
+        polys,tmax,emax_interp = self.interpolate_energies()
+
+        P_tmax = np.array(
+            [b(tmax) for b in self._basis[0]])
+        image_tmax = self.images[0].copy()
+        image_tmax.set_positions(
+            np.tensordot(P_tmax,self.coefs,1))
+        self.history.tmax.append(tmax)
+        self.history.images_tmax.append(image_tmax)
+
+        if hasattr(self,'beta'):
+            if self.update_teval:
+                un_di = inf_du \
+                    /self.ipopt_options['obj_scaling_factor'] \
+                    /np.amax(self.var_scales)
+                tol_di = self.ipopt_options['dual_inf_tol'] \
+                    /np.amax(self.var_scales)
+
+                de  = self.de
+                ade0 = self.ade0
+                di0 = self.di0
+                mu0 = self.mu0
+                di1 = self.di1
+                mu1 = self.mu1
+                g1  = self.g1
+                c0  = 0.5         *np.tanh(-2.0*mu0*(un_di-di0)) + 0.5
+                c1  = 0.5*(1.0-g1)*np.tanh( 2.0*mu1*(un_di-di1)) + 0.5*(1.0+g1)
+
+                nmove = self.nmove
+                barrier = emax_interp - np.amax(self._e_ends)\
+                    +self.e0
+                de = min(2.0/float(nmove+1)*barrier,de)
+                delta_e = de*np.arange(0.5*(nmove%2+1.0),0.5*(nmove+1.0),1.0)
+                e2t = self.interpolate_energies(delta_e=delta_e)[3]
+                t_cand_m = np.hstack([tl[tl<tmax] for tl in e2t])
+                t_cand_p = np.hstack([tl[tl>tmax] for tl in e2t])
+                temp_t_eval_m = t_cand_m[
+                    np.argsort(np.abs(t_cand_m-tmax))[:nmove//2]]
+                temp_t_eval_p = t_cand_p[
+                    np.argsort(np.abs(t_cand_p-tmax))[:nmove//2]]
+                if nmove%2==1:
+                    temp_t_eval_p = np.append(temp_t_eval_p,tmax)
+                temp_t_eval = np.sort(np.append(temp_t_eval_m,temp_t_eval_p))
+
+                alpha = c0*self.max_alpha
+                t_eval = self.t_eval.copy()
+                t_eval[1:-1] = (1.0-alpha)*t_eval[1:-1] + alpha*temp_t_eval
+
+                self.set_t_eval(t_eval)
+                self.set_w_eval()
+
+                self.max_alpha *= c1
+
 
 class DirectMaxFlux(GeometricAction):
 
@@ -672,181 +832,4 @@ class DirectMaxFlux(GeometricAction):
 
     def _get_func_en(self,en):
         return np.exp(self.beta*en),self.beta*np.exp(self.beta*en)
-
-
-
-class GeoActProblem(cyipopt.Problem):
-
-    def __init__(self,dga):
-
-        if hasattr(dga,'beta'):
-            dga.is_dmf = True
-        else:
-            dga.is_dmf = False
-        self.dga = dga
-
-        nvar = (dga.nbasis-2)*3*dga.natoms
-        self.nc = nvar
-        if dga.remove_rotation_and_translation:
-            nvar += 3
-
-        self.var_scales = 1.0
-
-        m_vel = dga.t_vel.size-1
-        cl = np.full(m_vel,1.0-dga.eps_vel)
-        cu = np.full(m_vel,1.0+dga.eps_vel)
-
-        if dga.remove_rotation_and_translation:
-            cl_trans=np.zeros(3*dga.t_trans.size)
-            cu_trans=np.zeros(3*dga.t_trans.size)
-            m_rot = 3*(dga.t_rot.size-1)
-            cl_rot=np.full(m_rot,-dga.eps_rot)
-            cu_rot=np.full(m_rot, dga.eps_rot)
-
-            cl = np.hstack([cl,cl_trans,cl_rot])
-            cu = np.hstack([cu,cu_trans,cu_rot])
-
-        lb = np.full(nvar,-2.0e19)
-        ub = np.full(nvar, 2.0e19)
-
-        super(GeoActProblem, self).__init__(
-            n=nvar, m=len(cl),
-            lb=lb, ub=ub,
-            cl=cl, cu=cu,)
-
-        self.history = self.History()
-
-    class History():
-        def __init__(self):
-            self.forces=[]
-            self.energies=[]
-            self.coefs=[]
-            self.angs=[]
-            self.teval=[]
-            self.tmax=[]
-            self.images_tmax=[]
-            self.beta=[]
-            self.weval=[]
-            self.duals=[]
-
-    def add_options(self,dict_options):
-        for item in dict_options.items():
-            self.add_option(*item)
-
-    #def add_var_scales(self,var_scales):
-    #    self.var_scales = var_scales
-
-    def get_x(self):
-        x = self.dga.coefs[1:-1].flatten()
-        if self.dga.remove_rotation_and_translation:
-            x = np.hstack([x,self.dga.angs])
-        return x/self.var_scales
-
-    def set_x(self,x):
-        coefs = self.dga._coefs0.copy()
-        y = x*self.var_scales
-        coefs[1:-1] = y[:self.nc].reshape((-1,self.dga.natoms,3))
-        angs = np.zeros(3)
-        if self.dga.remove_rotation_and_translation:
-            angs = y[self.nc:self.nc+3]
-
-        self.dga.set_positions(coefs,angs)
-
-    def objective(self, x):
-        self.set_x(x)
-        return self.dga._get_objective()
-
-    def gradient(self,x):
-        self.set_x(x)
-        grad = self.dga._reshape_jacs(
-            [self.dga._get_grad_objective()])
-        return grad*self.var_scales
-
-    def constraints(self,x):
-        self.set_x(x)
-        c_list = [self.dga._get_consts_vel()]
-        if self.dga.remove_rotation_and_translation:
-            c_list.append(self.dga._get_consts_trans())
-            c_list.append(self.dga._get_consts_rot())
-        return self.dga._reshape_consts(c_list)
-
-    def jacobian(self,x):
-        self.set_x(x)
-        j_list = [self.dga._get_jac_vel()]
-        if self.dga.remove_rotation_and_translation:
-            j_list.append(self.dga._get_jac_trans())
-            j_list.append(self.dga._get_jac_rot())
-        return self.dga._reshape_jacs(j_list)*self.var_scales
-
-    def intermediate(self, alg_mod, iter_count, obj_value,
-                     inf_pr, inf_du, mu, d_norm, regularization_size,
-                     alpha_du, alpha_pr, ls_trials):
-
-        self.history.forces.append(self.dga.forces)
-        self.history.energies.append(self.dga.energies)
-        self.history.coefs.append(self.dga.coefs)
-        self.history.angs.append(self.dga.angs)
-        self.history.teval.append(self.dga.t_eval)
-        self.history.weval.append(self.dga.w_eval)
-        if self.dga.is_dmf:
-            self.history.beta.append(self.dga.beta)
-        self.history.duals.append(inf_du)
-
-        polys,tmax,emax_interp = self.dga.interpolate_energies()
-
-        P_tmax = np.array(
-            [b(tmax) for b in self.dga._basis[0]])
-        image_tmax = self.dga.images[0].copy()
-        image_tmax.set_positions(
-            np.tensordot(P_tmax,self.dga.coefs,1))
-        self.history.tmax.append(tmax)
-        self.history.images_tmax.append(image_tmax)
-
-        if iter_count==0:
-            for image in self.dga.images:
-                if hasattr(image,'calc1'):
-                    image.calc = image.calc1
-
-        if self.dga.is_dmf:
-            if self.dga.update_teval:
-                un_di = inf_du \
-                    /self.options['obj_scaling_factor'] \
-                    /np.amax(self.var_scales)
-                tol_di = self.options['dual_inf_tol'] \
-                    /np.amax(self.var_scales)
-
-                de  = self.dga.de
-                ade0 = self.dga.ade0
-                di0 = self.dga.di0
-                mu0 = self.dga.mu0
-                di1 = self.dga.di1
-                mu1 = self.dga.mu1
-                g1  = self.dga.g1
-                c0  = 0.5         *np.tanh(-2.0*mu0*(un_di-di0)) + 0.5
-                c1  = 0.5*(1.0-g1)*np.tanh( 2.0*mu1*(un_di-di1)) + 0.5*(1.0+g1)
-
-                nmove = self.dga.nmove
-                barrier = emax_interp - np.amax(self.dga._e_ends)\
-                    +self.dga.e0
-                de = min(2.0/float(nmove+1)*barrier,de)
-                delta_e = de*np.arange(0.5*(nmove%2+1.0),0.5*(nmove+1.0),1.0)
-                e2t = self.dga.interpolate_energies(delta_e=delta_e)[3]
-                t_cand_m = np.hstack([tl[tl<tmax] for tl in e2t])
-                t_cand_p = np.hstack([tl[tl>tmax] for tl in e2t])
-                temp_t_eval_m = t_cand_m[
-                    np.argsort(np.abs(t_cand_m-tmax))[:nmove//2]]
-                temp_t_eval_p = t_cand_p[
-                    np.argsort(np.abs(t_cand_p-tmax))[:nmove//2]]
-                if nmove%2==1:
-                    temp_t_eval_p = np.append(temp_t_eval_p,tmax)
-                temp_t_eval = np.sort(np.append(temp_t_eval_m,temp_t_eval_p))
-
-                alpha = c0*self.dga.max_alpha
-                t_eval = self.dga.t_eval.copy()
-                t_eval[1:-1] = (1.0-alpha)*t_eval[1:-1] + alpha*temp_t_eval
-
-                self.dga.set_t_eval(t_eval)
-                self.dga.set_w_eval()
-
-                self.dga.max_alpha *= c1
 
