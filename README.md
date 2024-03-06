@@ -11,22 +11,21 @@ from dmf import DirectMaxFlux
 # see ASE's document for how to generate it
 ref_images = read('idpp_images.traj',index=':')
 
-# set up direct MaxFlux object
+# set up a variational problem of the direct MaxFlux method
 mxflx = DirectMaxFlux(ref_images,nmove=3,update_teval=True)
 
 # set up calculators
 for i,image in enumerate(mxflx.images):
     image.calc = EMT()
 
-# create and solve the variational problem
-mxflx.create_problem()
-mxflx.problem.add_option('output_file','sample_ipopt.out')
-mxflx.solve_problem()
+# solve the variational problem
+mxflx.add_ipopt_options({'output_file':'sample_ipopt.out'})
+mxflx.solve()
 
 # write final path
 write('sample_fin.traj',mxflx.images)
 # write history of x(tmax)
-write('sample_tmax.traj',mxflx.problem.history.images_tmax)
+write('sample_tmax.traj',mxflx.history.images_tmax)
 ```
 
 ## Requirements
@@ -38,7 +37,7 @@ write('sample_tmax.traj',mxflx.problem.history.images_tmax)
 
 ## Documentation
 
-Coming soon.
+See this [GitHub Pages](https://shin1koda.github.io/dmf/).
 
 ## Limitations
 
