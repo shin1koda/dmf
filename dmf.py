@@ -21,13 +21,13 @@ class GeometricAction(ABC,cyipopt.Problem):
 
     Attributes:
         images (list of ase.Atoms):
-        problem (GeomActProblem):
-        coefs (numpy.ndarray):
-        angs (numpy.ndarray):
         t_eval (numpy.ndarray):
         w_eval (numpy.ndarray):
+        coefs (numpy.ndarray):
+        angs (numpy.ndarray):
         energies (numpy.ndarray):
         forces (numpy.ndarray):
+        history (History object):
         remove_rotation_and_translation (bool):
         natoms (int):
         nsegs (int):
@@ -38,17 +38,36 @@ class GeometricAction(ABC,cyipopt.Problem):
         n_rot (int):
         eps_vel (float):
         eps_rot (float):
+        ipopt_options (dict):
     """
-    def __init__(
-            self,ref_images,coefs=None,
-            parallel=False,world=None,
-            remove_rotation_and_translation=True,
-            mass_weighted=False,
-            nsegs=4,dspl=3,
-            t_eval=None,w_eval=None,
-            n_vel=None,n_trans=None,n_rot=None,
-            eps_vel=0.01,eps_rot=0.01,
-            ):
+    def __init__(self,
+        ref_images,
+        coefs=None, nsegs=4,dspl=3,
+        remove_rotation_and_translation=True,
+        mass_weighted=False,
+        parallel=False,world=None,
+        t_eval=None,w_eval=None,
+        n_vel=None,n_trans=None,n_rot=None,
+        eps_vel=0.01,eps_rot=0.01,
+        ):
+        """__init__ method of GeometricAction.
+
+        Args:
+            ref_images (list of ase.Atoms):
+            nsegs (int):
+            dspl (int):
+            remove_rotation_and_translation (bool):
+            mass_weighted (bool):
+            parallel (bool):
+            world (MPI world object):
+            t_eval (numpy.ndarray):
+            w_eval (numpy.ndarray):
+            n_vel (int):
+            n_trans (int):
+            n_rot (int):
+            eps_vel (float):
+            eps_rot (float):
+        """
 
         #Atoms
         #self.ref_images = ref_images
@@ -147,7 +166,6 @@ class GeometricAction(ABC,cyipopt.Problem):
 
         #initialize cyipopt.Problem
         nvar = (self.nbasis-2)*3*self.natoms
-        self.nc = nvar
         if self.remove_rotation_and_translation:
             nvar += 3
 
@@ -197,16 +215,24 @@ class GeometricAction(ABC,cyipopt.Problem):
         self.add_ipopt_options(defaults)
 
     class History():
+        """Object storing histories of some properties.
+
+        Attributes:
+            forces (list of numpy.ndarray):
+            energies (list of numpy.ndarray):
+            coefs (list of numpy.ndarray):
+            angs (list of numpy.ndarray):
+            tmax (list of float):
+            images_tmax (list of ase.Atoms):
+            duals (list of float):
+        """
         def __init__(self):
             self.forces=[]
             self.energies=[]
             self.coefs=[]
             self.angs=[]
-            self.teval=[]
             self.tmax=[]
             self.images_tmax=[]
-            self.beta=[]
-            self.weval=[]
             self.duals=[]
 
     def _get_basis_values(self,t_seq):
@@ -216,10 +242,14 @@ class GeometricAction(ABC,cyipopt.Problem):
             for nu in range(3)])
 
     def set_t_eval(self,t_eval):
+        """Setter of t_eval.
+        """
         self.t_eval = t_eval
         self._P_eval = self._get_basis_values(self.t_eval)
 
     def set_w_eval(self,w_eval=None):
+        """Setter of w_eval.
+        """
         if w_eval is not None:
             self.w_eval = w_eval
         else:
@@ -275,6 +305,18 @@ class GeometricAction(ABC,cyipopt.Problem):
         return coefs
 
     def get_positions(self,t=None,P=None,nu=0):
+        """Get all positions of images at t or their derivatives.
+
+        Args:
+            t (1D numpy.ndarray, optional): All positions of images at t or their derivatives are returned. If not present, t_eval is used. Default is None.
+            P (numpy.ndarray, optional): Return of _get_basis_values(t). See source code. Default is None. If both t and P are present, P is used in priority.
+            nu (int, optional): Degree of derivative with respect to t. nu must be 0, 1, or 2. Default is 0.
+
+        Returns:
+            numpy.ndarray shape (nimages,natoms,3): Positions or their nu-th derivative at t.
+
+        """
+
         if t is None:
             t_temp = self.t_eval
         else:
@@ -286,6 +328,8 @@ class GeometricAction(ABC,cyipopt.Problem):
         return np.tensordot(P_temp[nu].T,self.coefs,1)
 
     def set_coefs_angs(self,coefs=None,angs=None):
+        """Setter of coefs and angs.
+        """
         if coefs is not None:
             self.coefs=coefs
         if angs is not None:
@@ -306,6 +350,12 @@ class GeometricAction(ABC,cyipopt.Problem):
         return R
 
     def set_positions(self,coefs=None,angs=None):
+        """Set positions of all images in self.images. These positions are determined by coefs and angs.
+
+        Args:
+            coefs (numpy.ndarray shape (nbasis,natoms,3), optional): If not present, self.coefs is used. Default is None.
+            angs (numpy.ndarray shape (3), optional): If not present, self.angs is used. Default is None.
+        """
         self.set_coefs_angs(coefs,angs)
         pos = self.get_positions()
         for i in range(self.t_eval.size):
@@ -420,13 +470,25 @@ class GeometricAction(ABC,cyipopt.Problem):
             for thread in threads:
                 thread.join()
         else:
-            if self._world.rank == 0:
-                forces[0]=self.images[0].get_forces()
-            elif self._world.rank == 1:
-                forces[1]=self.images[-1].get_forces()
+            nmv = len(self.images)-2
+            i = self._world.rank * nmv // self._world.size
+            try:
+                if i==0:
+                    forces[0] = self.images[0].get_forces()
+                elif i==1:
+                    forces[-1] = self.images[-1].get_forces()
+            except Exception:
+                error = self._world.sum(1.0)
+                raise
+            else:
+                error = self._world.sum(0.0)
+                if error:
+                    raise RuntimeError('Parallel DMF failed!')
 
-            self._world.broadcast(forces[0], 0)
-            self._world.broadcast(forces[1], 1)
+            root0 = 0
+            root1 = self._world.size // nmv
+            self._world.broadcast(forces[0], root0)
+            self._world.broadcast(forces[-1], root1)
 
         return forces
 
@@ -438,13 +500,16 @@ class GeometricAction(ABC,cyipopt.Problem):
             energies[0] = self.images[0].get_potential_energy()
             energies[1] = self.images[-1].get_potential_energy()
         else:
-            if self._world.rank == 0:
+            nmv = len(self.images)-2
+            root0 = 0
+            root1 = self._world.size // nmv
+            if self._world.rank == root0:
                 energies[0] = self.images[0].get_potential_energy()
-            elif self._world.rank == 1:
+            elif self._world.rank == root1:
                 energies[1] = self.images[-1].get_potential_energy()
 
-            self._world.broadcast(energies[0:1], 0)
-            self._world.broadcast(energies[1:2], 1)
+            self._world.broadcast(energies[0:1], root0)
+            self._world.broadcast(energies[1:2], root1)
 
         return energies
 
@@ -454,6 +519,11 @@ class GeometricAction(ABC,cyipopt.Problem):
         return np.amin(self._e_ends)
 
     def get_forces(self):
+        """Get forces of all images in self.images. After calling this method, forces and energies are stored in self.forces and self.energies, respectively.
+
+        Returns:
+            numpy.ndarray shape (nimages,natoms,3): Forces of all images in self.images.
+        """
         eps_t=0.01
         forces = np.empty([self.t_eval.size, self.natoms, 3])
         energies = np.empty(self.t_eval.size)
@@ -492,16 +562,22 @@ class GeometricAction(ABC,cyipopt.Problem):
                 thread.join()
 
         else:
-            for k in range(len(inds)):
-                if k % self._world.size == self._world.rank:
-                    i = inds[k]
-                    forces[i] = self.images[i].get_forces()
-                    energies[i] = self.images[i].get_potential_energy()
+            nmv = len(self.images)-2
+            i = self._world.rank * nmv // self._world.size + 1
+            try:
+                forces[i] = self.images[i].get_forces()
+                energies[i] = self.images[i].get_potential_energy()
+            except Exception:
+                error = self._world.sum(1.0)
+                raise
+            else:
+                error = self._world.sum(0.0)
+                if error:
+                    raise RuntimeError('Parallel DMF failed!')
 
-            for k in range(len(inds)):
-                root = k % self._world.size
-                i = inds[k]
-                self._world.broadcast(energies[i:i+1], root)
+            for i in range(1,nmv+1):
+                root = (i-1) * self._world.size // nmv
+                self._world.broadcast(energies[i:i + 1], root)
                 self._world.broadcast(forces[i], root)
 
 
@@ -589,6 +665,21 @@ class GeometricAction(ABC,cyipopt.Problem):
     def interpolate_energies(
         self,t_eval=None,energies=None,forces=None,coefs=None,
         delta_e=None):
+        """Interpolate the enegy along the path. See Ref. 1 for details.
+
+        Args:
+            t_eval (numpy.ndarray shape (\:), optional): Points where energies and forces were evaluated. If not present, self.t_eval is used. Default is None.
+            energies (numpy.ndarray shape (len(t_eval)), optional): Energies evaluated at t_eval. If not present, self.energies is used. Default is None.
+            forces (numpy.ndarray shape (len(t_eval),natoms,3), optional): Forces evaluated at t_eval. If not present, self.forces is used. Default is None.
+            coefs (numpy.ndarray shape (nbasis,natoms,3), optional): Coefficients of B-spline functions. If not present, self.coefs is used. Default is None.
+            delta_e (list of float, optional): If present, return points that satisfy :math:`\\tilde{E}(t) = E_{\\max} - \\text{delta_e}`.
+
+        Returns:
+            polys (numpy.ndarray shape (len(t_eval)-1,4)): Coefficients of piecewise cubic polynomial.
+            t_max (float): Maximum point of :math:`\\tilde{E}(t)`.
+            e_max (float): Maximum value of :math:`\\tilde{E}(t)`.
+            t_de (list of float): Points that satisfy :math:`\\tilde{E}(t) = E_{\\max} - \\text{delta_e}`.
+        """
 
         if t_eval is None:
             t_eval = self.t_eval
@@ -630,30 +721,32 @@ class GeometricAction(ABC,cyipopt.Problem):
             imax = np.argmax(energies)
         else:
             imax = np.argmax(energies)-1
-        tmax = -( polys[imax,2] + np.sqrt(polys[imax,2]**2 \
+        t_max = -( polys[imax,2] + np.sqrt(polys[imax,2]**2 \
             -3.0*polys[imax,1]*polys[imax,3])) \
             /(3.0*polys[imax,3])
 
-        tmax_pow = np.array([tmax**i for i in range(4)])
-        emax=np.sum(tmax_pow*polys[imax])
+        t_max_pow = np.array([t_max**i for i in range(4)])
+        e_max=np.sum(t_max_pow*polys[imax])
 
         if delta_e is not None:
-            e2t = []
+            t_de = []
             for de in delta_e:
                 tlist = np.array([])
                 for i in range(len(t_eval)-1):
                     p = P.Polynomial(polys[i])
-                    p -= emax-de
+                    p -= e_max-de
                     roots = p.roots()
                     roots = roots.real[abs(roots.imag)<1e-5]
                     roots = roots[(roots>=t_eval[i])&(roots<t_eval[i+1])]
                     tlist = np.append(tlist,roots)
-                e2t.append(tlist)
-            return polys,tmax,emax,e2t
+                t_de.append(tlist)
+            return polys,t_max,e_max,t_de
 
-        return polys,tmax,emax
+        return polys,t_max,e_max
 
     def solve(self):
+        """Solve the variational problem.
+        """
         x0 = self.get_x()
         x,info = super().solve(x0)
         self.set_x(x)
@@ -661,37 +754,73 @@ class GeometricAction(ABC,cyipopt.Problem):
 
 
     def add_ipopt_options(self,dict_options):
+        """Method for adding ipopt options.
+        """
         self.ipopt_options.update(dict_options)
         for item in self.ipopt_options.items():
             self.add_option(*item)
 
     def get_x(self):
+        """Get variables of the variational problem in a 1D array.
+
+        Returns:
+            x (1D numpy.ndarray): self.coefs[1:-1].flatten(). If remove_rotation_and_translation is True, self.angs is appended.
+        """
         x = self.coefs[1:-1].flatten()
         if self.remove_rotation_and_translation:
             x = np.hstack([x,self.angs])
         return x/self.var_scales
 
     def set_x(self,x):
+        """Set self.coefs and self.angs from x.
+
+        Args:
+            x (1D numpy.ndarray): Variables of the variational problem in a 1D array.
+        """
+        nc = (self.nbasis-2)*3*self.natoms
         coefs = self._coefs0.copy()
         y = x*self.var_scales
-        coefs[1:-1] = y[:self.nc].reshape((-1,self.natoms,3))
+        coefs[1:-1] = y[:nc].reshape((-1,self.natoms,3))
         angs = np.zeros(3)
         if self.remove_rotation_and_translation:
-            angs = y[self.nc:self.nc+3]
+            angs = y[-3:]
 
         self.set_positions(coefs,angs)
 
     def objective(self, x):
+        """Objective function.
+
+        Args:
+            x (1D numpy.ndarray): Variables of the variational problem in a 1D array.
+
+        Returns:
+            float: Objective function.
+        """
         self.set_x(x)
         return self._get_objective()
 
     def gradient(self,x):
+        """Gradient of the objective function.
+
+        Args:
+            x (1D numpy.ndarray): Variables of the variational problem in a 1D array.
+
+        Returns:
+            numpy.ndarray shape (len(x)): Gradient of the objective function.
+        """
         self.set_x(x)
         grad = self._reshape_jacs(
             [self._get_grad_objective()])
         return grad*self.var_scales
 
     def constraints(self,x):
+        """Constraints.
+        Args:
+            x (1D numpy.ndarray): Variables of the variational problem in a 1D array.
+
+        Returns:
+            numpy.ndarray shape (# of constraints): Constraints.
+        """
         self.set_x(x)
         c_list = [self._get_consts_vel()]
         if self.remove_rotation_and_translation:
@@ -700,6 +829,13 @@ class GeometricAction(ABC,cyipopt.Problem):
         return self._reshape_consts(c_list)
 
     def jacobian(self,x):
+        """Jacobian of the constraints.
+        Args:
+            x (1D numpy.ndarray): Variables of the variational problem in a 1D array.
+
+        Returns:
+            numpy.ndarray shape (# of constraints,len(x)): Jacobian of the constraints.
+        """
         self.set_x(x)
         j_list = [self._get_jac_vel()]
         if self.remove_rotation_and_translation:
@@ -710,15 +846,13 @@ class GeometricAction(ABC,cyipopt.Problem):
     def intermediate(self, alg_mod, iter_count, obj_value,
                      inf_pr, inf_du, mu, d_norm, regularization_size,
                      alpha_du, alpha_pr, ls_trials):
+        """Method called at the end of each iteration.
+        """
 
         self.history.forces.append(self.forces)
         self.history.energies.append(self.energies)
         self.history.coefs.append(self.coefs)
         self.history.angs.append(self.angs)
-        self.history.teval.append(self.t_eval)
-        self.history.weval.append(self.w_eval)
-        if hasattr(self,'beta'):
-            self.history.beta.append(self.beta)
         self.history.duals.append(inf_du)
 
         polys,tmax,emax_interp = self.interpolate_energies()
@@ -731,93 +865,191 @@ class GeometricAction(ABC,cyipopt.Problem):
         self.history.tmax.append(tmax)
         self.history.images_tmax.append(image_tmax)
 
-        if hasattr(self,'beta'):
-            if self.update_teval:
-                un_di = inf_du \
-                    /self.ipopt_options['obj_scaling_factor'] \
-                    /np.amax(self.var_scales)
-                tol_di = self.ipopt_options['dual_inf_tol'] \
-                    /np.amax(self.var_scales)
-
-                de  = self.de
-                ade0 = self.ade0
-                di0 = self.di0
-                mu0 = self.mu0
-                di1 = self.di1
-                mu1 = self.mu1
-                g1  = self.g1
-                c0  = 0.5         *np.tanh(-2.0*mu0*(un_di-di0)) + 0.5
-                c1  = 0.5*(1.0-g1)*np.tanh( 2.0*mu1*(un_di-di1)) + 0.5*(1.0+g1)
-
-                nmove = self.nmove
-                barrier = emax_interp - np.amax(self._e_ends)\
-                    +self.e0
-                de = min(2.0/float(nmove+1)*barrier,de)
-                delta_e = de*np.arange(0.5*(nmove%2+1.0),0.5*(nmove+1.0),1.0)
-                e2t = self.interpolate_energies(delta_e=delta_e)[3]
-                t_cand_m = np.hstack([tl[tl<tmax] for tl in e2t])
-                t_cand_p = np.hstack([tl[tl>tmax] for tl in e2t])
-                temp_t_eval_m = t_cand_m[
-                    np.argsort(np.abs(t_cand_m-tmax))[:nmove//2]]
-                temp_t_eval_p = t_cand_p[
-                    np.argsort(np.abs(t_cand_p-tmax))[:nmove//2]]
-                if nmove%2==1:
-                    temp_t_eval_p = np.append(temp_t_eval_p,tmax)
-                temp_t_eval = np.sort(np.append(temp_t_eval_m,temp_t_eval_p))
-
-                alpha = c0*self.max_alpha
-                t_eval = self.t_eval.copy()
-                t_eval[1:-1] = (1.0-alpha)*t_eval[1:-1] + alpha*temp_t_eval
-
-                self.set_t_eval(t_eval)
-                self.set_w_eval()
-
-                self.max_alpha *= c1
-
 
 class DirectMaxFlux(GeometricAction):
+    """Class for the direct MaxFlux method.
+
+    This class defines the variational problem of the direct MaxFlux method.
+
+    Args:
+        ref_images (list of ase.Atoms):
+            Reference images for generating an initial path. If coefs is not present, coefs of the initial path is generated by a linear interpolation with ref_images. If coefs is present, only ref_images[0] and ref_images[-1] are used as the endpoints of the path.
+        coefs (numpy.ndarray shape (nbasis,natoms,3),optional):
+            Coefficients of basis functions. If coefs is present, the interpolation with ref_images is skipped, and coefs is stored as it is. Default is None.
+        nsegs (int,optional):
+            Determines the number of B-spline functions. See Ref. 1 for details. Default is 4.
+        dspl (int,optional):
+            Degree of B-spline functions. Default is 3.
+        remove_rotation_and_translation (bool,optional):
+            Remove redundancy regarding rotaional and translational symmetry. Default is True.
+        mass_weighted (bool,optional):
+            Use mass-weighted coordinates. False is recommended for a rapid convergence. Default is False.
+        parallel (bool,optional):
+            Calculate forces of images in parallel. Both Threading and MPI are supported. Default is False. Usage is basically the same as the NEB method in ASE. See `ASE's document <https://wiki.fysik.dtu.dk/ase/ase/neb.html#parallelization-over-images>`_.
+        world (MPI world object,optional):
+            If not present, ase.parallel.world is used. Default is None.
+        t_eval (numpy.ndarray shape (nmove+2),optional):
+            Initial energy evaluation points. If not present or update_teval is True, an equally distributed t_eval is used. Default is None.
+        w_eval (numpy.ndarray shape (nmove+2),optional):
+            Weights of the numerical integuration of the objective function. If not present, w_eval is determined by the trapezoidal formula. Default is None.
+        n_vel (int,optional):
+            Determines the number of velocity constraints. See Ref. 1 for details. If not present, n_vel is 4*nsegs. Default is None.
+        n_trans (int,optional):
+            Determines the number of translational constraints. See Ref. 1 for details. If not present, n_trans is 2*nsegs. Default is None.
+        n_rot (int,optional):
+            Determines the number of rotational constraints. See Ref. 1 for details. If not present, n_rot is 2*nsegs. Default is None.
+        eps_vel (float,optional):
+            Parameter for loosening velocity constraints. See Ref. 1 for details. Default is 0.01.
+        eps_rot (float,optional):
+            Parameter for loosening rotational constraints. See Ref. 1 for details. Default is 0.01.
+        beta (float,optional):
+            Reciprocal temperature of the direct MaxFlux method. Default is 10 [/eV].
+        nmove (int,optional):
+            The number of movable energy evaluation points (images). Default is 5.
+        update_teval (bool,optional):
+            Update t_eval at each iteration. Default is False.
+        params_t_update (dict,optional):
+            Parameters for t_eval updating. See Ref. 1 for details.
+
+    Attributes:
+        images (list of ase.Atoms):
+            nmove+2 images at t_eval.
+        coefs (numpy.ndarray shape (nbasis,natoms,3)):
+            Coefficients of B-spline functions.
+        angs (numpy.ndarray shape (3)):
+            Euler angles of images[-1], which is used when remove_rotation_and_translation is True.
+        energies (numpy.ndarray shape (nmove+2)):
+            Energies of all images, which are shifted by e0, are stored after calling get_forces().
+        e0 (float):
+            min(E(images[0]),E(images[-1]))
+        forces (numpy.ndarray shape (nmove+2,natoms,3)):
+            Forces of each image are stored after calling get_forces().
+        history (History object):
+            Object that stores histories of some properties. See History object below.
+        natoms (int):
+            The number of atoms in the system.
+        nbasis (int):
+            The number of the B-spline functions. nbasis = nsegs + dspl.
+        ipopt_options (dict):
+            Non-default options of IPOPT.
+        remove_rotation_and_translation (bool):
+            Same as the above parameter.
+        nsegs (int):
+            Same as the above parameter.
+        dspl (int):
+            Same as the above parameter.
+        t_eval (numpy.ndarray):
+            Same as the above parameter.
+        w_eval (numpy.ndarray):
+            Same as the above parameter.
+        n_vel (int):
+            Same as the above parameter.
+        n_trans (int):
+            Same as the above parameter.
+        n_rot (int):
+            Same as the above parameter.
+        eps_vel (float):
+            Same as the above parameter.
+        eps_rot (float):
+            Same as the above parameter.
+        beta (float):
+            Same as the above parameter.
+        nmove (int):
+            Same as the above parameter.
+        update_teval (bool):
+            Same as the above parameter.
+        params_t_update (dict):
+            Same as the above parameter.
+    """
 
     def __init__(
         self,
         ref_images,
+        coefs=None, nsegs=4,dspl=3,
+        remove_rotation_and_translation=True,
+        mass_weighted=False,
+        parallel=False,world=None,
+        t_eval=None,w_eval=None,
+        n_vel=None,n_trans=None,n_rot=None,
+        eps_vel=0.01,eps_rot=0.01,
         beta = 10.0,
-        max_alpha = 0.1,
-        de  = 0.15,
-        ade0 = 0.2,
-        di0 = 1.0,
-        mu0 = 5.0,
-        di1 = 0.2,
-        mu1 = 5.0,
-        g1  = 0.98,
-        update_teval = False,
-        adaptive_method = None,
         nmove = 5,
-        **kwargs):
+        update_teval = False,
+        params_t_update = {
+            'max_alpha0':0.1,'de':0.15,
+            'dia':1.0,'mua':5.0,
+            'dib':0.2,'mub':5.0,'epsb':0.02,},
+        ):
+        """__init__ method of DirectMaxFlux.
 
+        Args:
+            ref_images (list of ase.Atoms):
+            coefs (numpy.ndarray,optional):
+            nsegs (int,optional):
+            dspl (int,optional):
+            remove_rotation_and_translation (bool,optional):
+            mass_weighted (bool,optional):
+            parallel (bool,optional):
+            world (MPI world object,optional):
+            t_eval (numpy.ndarray,optional):
+            w_eval (numpy.ndarray,optional):
+            n_vel (int,optional):
+            n_trans (int,optional):
+            n_rot (int,optional):
+            eps_vel (float,optional):
+            eps_rot (float,optional):
+            beta (float,optional):
+            nmove (int,optional):
+            update_teval (bool,optional):
+            params_t_update (dict,optional):
+        """
+        args = locals()
+        base_params = [
+            'ref_images','coefs','nsegs','dspl',
+            'remove_rotation_and_translation','mass_weighted',
+            'parallel','world','t_eval','w_eval','n_vel',
+            'n_trans','n_rot','eps_vel','eps_rot']
+        base_args = {k:args[k] for k in base_params}
 
         self.beta = beta
-        self.max_alpha = max_alpha
-        self.de  = de
-        self.ade0 = ade0
-        self.di0 = di0
-        self.mu0 = mu0
-        self.di1 = di1
-        self.mu1 = mu1
-        self.g1  = g1
+        self.params_t_update = params_t_update
+        self._max_alpha = params_t_update['max_alpha0']
 
         self.update_teval = update_teval
-        if adaptive_method == 'full_tmax':
-            self.update_teval = True
 
         self.nmove = nmove
 
         if self.update_teval:
-            super().__init__(
-                ref_images,
-                t_eval=np.linspace(0.0,1.0,nmove+2),
-                **kwargs)
-        else:
-            super().__init__(ref_images,**kwargs)
+            base_args.update(t_eval=np.linspace(0.0,1.0,nmove+2))
+
+        super().__init__(**base_args)
+
+
+    class History():
+        """Object storing histories of properties listed below.
+
+        Attributes:
+            forces (list of numpy.ndarray shape (nmove+2,natoms,3)):
+            energies (list of numpy.ndarray shape (nmove+2)):
+            coefs (list of numpy.ndarray shape (nbasis,natoms,3)):
+            angs (list of numpy.ndarray shape (3)):
+            t_eval (list of numpy.ndarray shape (nmove+2)):
+            tmax (list of float):
+                History of tmax. tmax is the highest energy point of the interpoated energy along the path. See Ref. 1 for details.
+            images_tmax (list of ase.Atoms):
+                History of the image at t=tmax, an approximation of TS.
+            duals (list of float):
+                History of the scaled dual infeasibility.
+        """
+        def __init__(self):
+            self.forces=[]
+            self.energies=[]
+            self.coefs=[]
+            self.angs=[]
+            self.tmax=[]
+            self.images_tmax=[]
+            self.duals=[]
+            self.t_eval=[]
 
     def get_forces(self):
         super().get_forces()
@@ -833,3 +1065,57 @@ class DirectMaxFlux(GeometricAction):
     def _get_func_en(self,en):
         return np.exp(self.beta*en),self.beta*np.exp(self.beta*en)
 
+    def intermediate(self, alg_mod, iter_count, obj_value,
+                     inf_pr, inf_du, mu, d_norm, regularization_size,
+                     alpha_du, alpha_pr, ls_trials):
+        """Method called at the end of each iteration. Updating of t_eval is defined in this method.
+        """
+
+        super().intermediate(alg_mod, iter_count, obj_value,
+                     inf_pr, inf_du, mu, d_norm, regularization_size,
+                     alpha_du, alpha_pr, ls_trials)
+
+        if self.update_teval:
+            self.history.t_eval.append(self.t_eval)
+
+            polys,tmax,emax_interp = self.interpolate_energies()
+
+            un_di = inf_du \
+                /self.ipopt_options['obj_scaling_factor'] \
+                /np.amax(self.var_scales)
+            tol_di = self.ipopt_options['dual_inf_tol'] \
+                /np.amax(self.var_scales)
+
+            de   = self.params_t_update['de']
+            dia  = self.params_t_update['dia']
+            mua  = self.params_t_update['mua']
+            dib  = self.params_t_update['dib']
+            mub  = self.params_t_update['mub']
+            epsb = self.params_t_update['epsb']
+
+            ca = 0.5*(1.0+np.tanh(-2.0*mua*(un_di-dia)))
+            cb = 1.0-0.5*epsb*(1.0+np.tanh(-2.0*mub*(un_di-dib)))
+
+            nmove = self.nmove
+            barrier = emax_interp - np.amax(self._e_ends)+self.e0
+            de = min(2.0/float(nmove+1)*barrier,de)
+            delta_e = de*np.arange(0.5*(nmove%2+1.0),0.5*(nmove+1.0),1.0)
+            t_de = self.interpolate_energies(delta_e=delta_e)[3]
+            t_cand_m = np.hstack([tl[tl<tmax] for tl in t_de])
+            t_cand_p = np.hstack([tl[tl>tmax] for tl in t_de])
+            temp_t_eval_m = t_cand_m[
+                np.argsort(np.abs(t_cand_m-tmax))[:nmove//2]]
+            temp_t_eval_p = t_cand_p[
+                np.argsort(np.abs(t_cand_p-tmax))[:nmove//2]]
+            if nmove%2==1:
+                temp_t_eval_p = np.append(temp_t_eval_p,tmax)
+            temp_t_eval = np.sort(np.append(temp_t_eval_m,temp_t_eval_p))
+
+            alpha = ca*self._max_alpha
+            t_eval = self.t_eval.copy()
+            t_eval[1:-1] = (1.0-alpha)*t_eval[1:-1] + alpha*temp_t_eval
+
+            self.set_t_eval(t_eval)
+            self.set_w_eval()
+
+            self._max_alpha *= cb
