@@ -15,7 +15,7 @@ ref_images = read('idpp_images.traj',index=':')
 mxflx = DirectMaxFlux(ref_images,nmove=3,update_teval=True)
 
 # set up calculators
-for i,image in enumerate(mxflx.images):
+for image in mxflx.images:
     image.calc = EMT()
 
 # solve the variational problem
