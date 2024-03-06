@@ -22,9 +22,8 @@ for image in mxflx.images:
 mxflx.add_ipopt_options({'output_file':'sample_ipopt.out'})
 mxflx.solve()
 
-# write final path
+# write final path and history of x(tmax)
 write('sample_fin.traj',mxflx.images)
-# write history of x(tmax)
 write('sample_tmax.traj',mxflx.history.images_tmax)
 ```
 
