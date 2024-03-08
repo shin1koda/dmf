@@ -20,7 +20,7 @@ for image in mxflx.images:
 
 # solve the variational problem
 mxflx.add_ipopt_options({'output_file':'sample_ipopt.out'})
-mxflx.solve()
+mxflx.solve(tol='middle')
 
 # write final path and history of x(tmax)
 write('sample_fin.traj',mxflx.images)
