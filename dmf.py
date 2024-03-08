@@ -744,9 +744,24 @@ class GeometricAction(ABC,cyipopt.Problem):
 
         return polys,t_max,e_max
 
-    def solve(self):
+    def solve(self,tol=None):
         """Solve the variational problem.
+
+        Args:
+            tol (float or str, optional): Change IOPOT option dual_inf_tol. If tol is float, dual_inf_tol is set to tol. If tol is either 'tight', 'middle', or 'loose' (keywords used in Ref. 1), dual_inf_tol is set to 0.04, 0.1, or 0.2, respectively. Default is None.
         """
+
+        if tol:
+            if isinstance(tol,float):
+                self.add_ipopt_options({'dual_inf_tol':tol})
+            elif isinstance(tol,str):
+                if tol.strip().upper()=='TIGHT':
+                    self.add_ipopt_options({'dual_inf_tol':0.04})
+                elif tol.strip().upper()=='MIDDLE':
+                    self.add_ipopt_options({'dual_inf_tol':0.1})
+                elif tol.strip().upper()=='LOOSE':
+                    self.add_ipopt_options({'dual_inf_tol':0.2})
+
         x0 = self.get_x()
         x,info = super().solve(x0)
         self.set_x(x)
@@ -931,7 +946,7 @@ class DirectMaxFlux(GeometricAction):
         nbasis (int):
             The number of the B-spline functions. nbasis = nsegs + dspl.
         ipopt_options (dict):
-            Non-default options of IPOPT.
+            Non-default options of IPOPT. On initialization, {'tol'\:1.0, 'dual_inf_tol'\:0.04, 'constr_viol_tol'\:0.01, 'compl_inf_tol'\:0.01, 'nlp_scaling_method'\:'user-scaling', 'obj_scaling_factor'\:0.1, 'limited_memory_initialization'\:'constant', 'limited_memory_init_val'\:2.5, 'accept_every_trial_step'\:'yes', 'output_file'\:'dmf.out',} is set.
         remove_rotation_and_translation (bool):
             Same as the above parameter.
         nsegs (int):
