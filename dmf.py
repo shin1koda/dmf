@@ -744,11 +744,11 @@ class GeometricAction(ABC,cyipopt.Problem):
 
         return polys,t_max,e_max
 
-    def solve(self,tol=None):
+    def solve(self,tol='tight'):
         """Solve the variational problem.
 
         Args:
-            tol (float or str, optional): Change IOPOT option dual_inf_tol. If tol is float, dual_inf_tol is set to tol. If tol is either 'tight', 'middle', or 'loose' (keywords used in Ref. 1), dual_inf_tol is set to 0.04, 0.1, or 0.2, respectively. Default is None.
+            tol (float or str, optional): Change IOPOT option dual_inf_tol. If tol is float, dual_inf_tol is set to tol. If tol is either 'tight', 'middle', or 'loose' (keywords used in Ref. 1), dual_inf_tol is set to 0.04, 0.1, or 0.2, respectively. Default is 'tight'.
         """
 
         if tol:
