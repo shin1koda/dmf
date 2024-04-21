@@ -11,6 +11,9 @@ import cyipopt
 
 import ase.parallel
 from ase.utils import lazyproperty
+from ase.neb import IDPP
+#from sidpp import SIDPP
+from ase.data import covalent_radii
 
 
 class GeometricAction(ABC,cyipopt.Problem):
@@ -45,6 +48,7 @@ class GeometricAction(ABC,cyipopt.Problem):
         coefs=None, nsegs=4,dspl=3,
         remove_rotation_and_translation=True,
         mass_weighted=False,
+        check_collisions=False,
         parallel=False,world=None,
         t_eval=None,w_eval=None,
         n_vel=None,n_trans=None,n_rot=None,
@@ -70,13 +74,14 @@ class GeometricAction(ABC,cyipopt.Problem):
         """
 
         #Atoms
-        #self.ref_images = ref_images
         self.natoms = len(ref_images[0])
         if mass_weighted:
             self._masses = ref_images[0].get_masses()
         else:
             self._masses = np.ones(self.natoms)
         self._mass_fracs = self._masses/np.sum(self._masses)
+
+        self.check_collisions = check_collisions
 
         #Constraints
         self.remove_rotation_and_translation \
@@ -258,6 +263,30 @@ class GeometricAction(ABC,cyipopt.Problem):
             w[-1] = 0.5*(self.t_eval[-1]-self.t_eval[-2])
             w[1:-1] = 0.5*(self.t_eval[2:]-self.t_eval[:-2])
             self.w_eval = w
+
+    def _collide(self,image):
+        r = covalent_radii[image.arrays['numbers']]
+        r_cov = r[None,:]+r[:,None]
+        np.fill_diagonal(r_cov,0.0)
+        d = image.get_all_distances()
+        np.fill_diagonal(d,1.0e5)
+
+        return np.any(d<0.5*r_cov)
+        #return np.any(d<0.4)
+
+    def _ignore_collisions(self):
+        r = covalent_radii[self.images[0].arrays['numbers']]
+        r_cov = r[None,:]+r[:,None]
+        np.fill_diagonal(r_cov,0.0)
+        for i,image in enumerate(self.images):
+            d = image.get_all_distances()
+            #if np.any(d<0.25*r_cov):
+            if np.any(d<0.5):
+                self.w_eval[i] = 0.0
+        print(self.w_eval)
+        #izeros = np.where(self.w_eval<0.01)[0]
+        #if len(izeros)>0:
+        #    self.w_eval[izeros[0]:izeros[-1]+1] = 0.0
 
     def _get_coefs_from_ref_images(self,ref_images):
         ref_images_copy = [image.copy() for image in ref_images]
@@ -525,8 +554,12 @@ class GeometricAction(ABC,cyipopt.Problem):
             numpy.ndarray shape (nimages,natoms,3): Forces of all images in self.images.
         """
         eps_t=0.01
+        eps_w=0.001
+
+
         forces = np.empty([self.t_eval.size, self.natoms, 3])
         energies = np.empty(self.t_eval.size)
+        e0 = self.e0
 
         inds=[]
         for i in range(self.t_eval.size):
@@ -543,8 +576,12 @@ class GeometricAction(ABC,cyipopt.Problem):
 
         if not self.parallel:
             for i in inds:
-                forces[i] = self.images[i].get_forces()
-                energies[i] = self.images[i].get_potential_energy()
+                if self.check_collisions and self._collide(self.images[i]):
+                    forces[i] = 0.0
+                    energies[i] = e0-1.0e5
+                else:
+                    forces[i] = self.images[i].get_forces()
+                    energies[i] = self.images[i].get_potential_energy()
 
         elif self._world.size==1:
             def run(image, energies, forces):
@@ -583,6 +620,7 @@ class GeometricAction(ABC,cyipopt.Problem):
 
         self.energies = energies
         self.forces = forces
+
 
         return forces
 
@@ -881,6 +919,7 @@ class GeometricAction(ABC,cyipopt.Problem):
         self.history.images_tmax.append(image_tmax)
 
 
+
 class DirectMaxFlux(GeometricAction):
     """Class for the direct MaxFlux method.
 
@@ -983,6 +1022,7 @@ class DirectMaxFlux(GeometricAction):
         coefs=None, nsegs=4,dspl=3,
         remove_rotation_and_translation=True,
         mass_weighted=False,
+        check_collisions=False,
         parallel=False,world=None,
         t_eval=None,w_eval=None,
         n_vel=None,n_trans=None,n_rot=None,
@@ -1022,6 +1062,7 @@ class DirectMaxFlux(GeometricAction):
         base_params = [
             'ref_images','coefs','nsegs','dspl',
             'remove_rotation_and_translation','mass_weighted',
+            'check_collisions',
             'parallel','world','t_eval','w_eval','n_vel',
             'n_trans','n_rot','eps_vel','eps_rot']
         base_args = {k:args[k] for k in base_params}
@@ -1034,8 +1075,7 @@ class DirectMaxFlux(GeometricAction):
 
         self.nmove = nmove
 
-        if self.update_teval:
-            base_args.update(t_eval=np.linspace(0.0,1.0,nmove+2))
+        base_args.update(t_eval=np.linspace(0.0,1.0,nmove+2))
 
         super().__init__(**base_args)
 
@@ -1134,3 +1174,96 @@ class DirectMaxFlux(GeometricAction):
             self.set_w_eval()
 
             self._max_alpha *= cb
+
+
+def interpolate_idpp(
+        ref_images,nmove=10,
+        output_file='idpp_ipopt.out',
+        check_collisions=False,
+        soft_core=False,
+        dmf_options={}):
+
+    mxflx = DirectMaxFlux(ref_images,
+                          nmove=nmove,
+                          update_teval=False,
+                          check_collisions=check_collisions,
+                          **dmf_options)
+
+    d1 = ref_images[0].get_all_distances()
+    d2 = ref_images[-1].get_all_distances()
+    d = (d2 - d1) / (nmove + 1)
+
+    for i,image in enumerate(mxflx.images):
+        if soft_core:
+            image.calc = SIDPP(d1+i*d,mic=False)
+        else:
+            image.calc = IDPP(d1+i*d,mic=False)
+
+    options = {
+        'tol': 0.01,
+        'dual_inf_tol': 0.01,
+        'constr_viol_tol': 0.01,
+        'compl_inf_tol': 0.01,
+        'nlp_scaling_method':'user-scaling',
+        'obj_scaling_factor':0.1,
+        'limited_memory_initialization':'constant',
+        'limited_memory_init_val':2.5,
+        'accept_every_trial_step':'yes',
+        'max_iter':500,
+        'output_file':output_file,
+        }
+    mxflx.add_ipopt_options(options)
+
+    w_eval0 = mxflx.w_eval.copy()
+    b_scale = 3.0
+
+    #for i in range(5):
+    #    mxflx.get_forces()
+    #    ens = mxflx.energies.copy()
+    #    print(ens)
+    #    if np.amax(ens)>0.0:
+    #        mxflx.beta=b_scale/np.amax(ens)
+    #    else:
+    #        mxflx.beta=1.0
+
+    #    if i<3:
+    #        mxflx.solve(tol=0.1)
+    #    else:
+    #        mxflx.solve(tol=0.01)
+
+    if check_collisions:
+        for i in range(5):
+            mxflx.get_forces()
+            ens = mxflx.energies.copy()
+            if np.amax(ens)>0.0:
+                mxflx.beta=b_scale/np.amax(ens)
+            else:
+                mxflx.beta=1.0
+
+            if i<3:
+                mxflx.solve(tol=0.1)
+            else:
+                mxflx.solve(tol=0.01)
+    else:
+        for i in range(1,(nmove+1)//2+4):
+            mxflx.get_forces()
+            ens = mxflx.energies.copy()
+            w_eval = w_eval0.copy()
+            if i+1 < nmove+1-i:
+                ens[i+1:nmove+1-i] = 0.0
+                w_eval[i+1:nmove+1-i] = 0.0
+            if np.amax(ens)>0.0:
+                mxflx.beta=b_scale/np.amax(ens)
+            else:
+                mxflx.beta=1.0
+            mxflx.set_w_eval(w_eval)
+
+            if i<(nmove+1)//2:
+                mxflx.solve(tol=0.01)
+            else:
+                mxflx.solve(tol=0.01)
+
+    emax=np.amax(mxflx.energies)
+    print(f'emax: {emax:.5e}')
+
+    return mxflx
