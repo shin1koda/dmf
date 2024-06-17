@@ -1,13 +1,21 @@
+import numpy as np
 from ase.io import write, read
 from ase.calculators.emt import EMT
-from dmf import DirectMaxFlux
+from dmf import DirectMaxFlux, interpolate_fbenm
 
-# read idpp-interpolated images created from react.xyz and prod.xyz
-# see ASE's document for how to generate it
-ref_images = read('idpp_images.traj',index=':')
+# read react.xyz and prod.xyz
+ref_images = [read('react.xyz'), read('prod.xyz')]
+
+# generate initial path by FB-ENM
+mxflx_fbenm = interpolate_fbenm(ref_images)
+
+# write initial path and its coefficients
+write('sample_ini.traj',mxflx_fbenm.images)
+coefs = mxflx_fbenm.coefs.copy()
+np.save('sample_ini_coefs',coefs)
 
 # set up a variational problem of the direct MaxFlux method
-mxflx = DirectMaxFlux(ref_images,nmove=3,update_teval=True)
+mxflx = DirectMaxFlux(ref_images,coefs=coefs,nmove=3,update_teval=True)
 
 # set up calculators
 for image in mxflx.images:

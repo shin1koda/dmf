@@ -11,9 +11,9 @@ import cyipopt
 
 import ase.parallel
 from ase.utils import lazyproperty
-from ase.neb import IDPP
-#from sidpp import SIDPP
+from ase.calculators.calculator import Calculator
 from ase.data import covalent_radii
+from ase.data.vdw_alvarez import vdw_radii
 
 
 class GeometricAction(ABC,cyipopt.Problem):
@@ -48,7 +48,6 @@ class GeometricAction(ABC,cyipopt.Problem):
         coefs=None, nsegs=4,dspl=3,
         remove_rotation_and_translation=True,
         mass_weighted=False,
-        check_collisions=False,
         parallel=False,world=None,
         t_eval=None,w_eval=None,
         n_vel=None,n_trans=None,n_rot=None,
@@ -80,8 +79,6 @@ class GeometricAction(ABC,cyipopt.Problem):
         else:
             self._masses = np.ones(self.natoms)
         self._mass_fracs = self._masses/np.sum(self._masses)
-
-        self.check_collisions = check_collisions
 
         #Constraints
         self.remove_rotation_and_translation \
@@ -263,30 +260,6 @@ class GeometricAction(ABC,cyipopt.Problem):
             w[-1] = 0.5*(self.t_eval[-1]-self.t_eval[-2])
             w[1:-1] = 0.5*(self.t_eval[2:]-self.t_eval[:-2])
             self.w_eval = w
-
-    def _collide(self,image):
-        r = covalent_radii[image.arrays['numbers']]
-        r_cov = r[None,:]+r[:,None]
-        np.fill_diagonal(r_cov,0.0)
-        d = image.get_all_distances()
-        np.fill_diagonal(d,1.0e5)
-
-        return np.any(d<0.5*r_cov)
-        #return np.any(d<0.4)
-
-    def _ignore_collisions(self):
-        r = covalent_radii[self.images[0].arrays['numbers']]
-        r_cov = r[None,:]+r[:,None]
-        np.fill_diagonal(r_cov,0.0)
-        for i,image in enumerate(self.images):
-            d = image.get_all_distances()
-            #if np.any(d<0.25*r_cov):
-            if np.any(d<0.5):
-                self.w_eval[i] = 0.0
-        print(self.w_eval)
-        #izeros = np.where(self.w_eval<0.01)[0]
-        #if len(izeros)>0:
-        #    self.w_eval[izeros[0]:izeros[-1]+1] = 0.0
 
     def _get_coefs_from_ref_images(self,ref_images):
         ref_images_copy = [image.copy() for image in ref_images]
@@ -576,12 +549,8 @@ class GeometricAction(ABC,cyipopt.Problem):
 
         if not self.parallel:
             for i in inds:
-                if self.check_collisions and self._collide(self.images[i]):
-                    forces[i] = 0.0
-                    energies[i] = e0-1.0e5
-                else:
-                    forces[i] = self.images[i].get_forces()
-                    energies[i] = self.images[i].get_potential_energy()
+                forces[i] = self.images[i].get_forces()
+                energies[i] = self.images[i].get_potential_energy()
 
         elif self._world.size==1:
             def run(image, energies, forces):
@@ -759,12 +728,20 @@ class GeometricAction(ABC,cyipopt.Problem):
             imax = np.argmax(energies)
         else:
             imax = np.argmax(energies)-1
-        t_max = -( polys[imax,2] + np.sqrt(polys[imax,2]**2 \
-            -3.0*polys[imax,1]*polys[imax,3])) \
-            /(3.0*polys[imax,3])
 
-        t_max_pow = np.array([t_max**i for i in range(4)])
-        e_max=np.sum(t_max_pow*polys[imax])
+        if imax == -1:
+            t_max = 0.0
+            e_max = energies[0]
+        elif imax == i_fin:
+            t_max = 1.0
+            e_max = energies[-1]
+        else:
+            t_max = -( polys[imax,2] + np.sqrt(polys[imax,2]**2 \
+                -3.0*polys[imax,1]*polys[imax,3])) \
+                /(3.0*polys[imax,3])
+
+            t_max_pow = np.array([t_max**i for i in range(4)])
+            e_max=np.sum(t_max_pow*polys[imax])
 
         if delta_e is not None:
             t_de = []
@@ -1022,7 +999,6 @@ class DirectMaxFlux(GeometricAction):
         coefs=None, nsegs=4,dspl=3,
         remove_rotation_and_translation=True,
         mass_weighted=False,
-        check_collisions=False,
         parallel=False,world=None,
         t_eval=None,w_eval=None,
         n_vel=None,n_trans=None,n_rot=None,
@@ -1062,7 +1038,6 @@ class DirectMaxFlux(GeometricAction):
         base_params = [
             'ref_images','coefs','nsegs','dspl',
             'remove_rotation_and_translation','mass_weighted',
-            'check_collisions',
             'parallel','world','t_eval','w_eval','n_vel',
             'n_trans','n_rot','eps_vel','eps_rot']
         base_args = {k:args[k] for k in base_params}
@@ -1176,31 +1151,262 @@ class DirectMaxFlux(GeometricAction):
             self._max_alpha *= cb
 
 
-def interpolate_idpp(
+class FB_ENM(Calculator):
+    """General form of Flat Bottom Elastic Network Model
+    """
+
+    implemented_properties = ['energy', 'forces']
+
+    def __init__(self, d_min,d_max,
+                 delta_min=None,delta_max=None,delta_scale=0.2):
+        Calculator.__init__(self)
+
+        I = np.identity(len(d_min),dtype='bool')
+
+        self.d_min = d_min
+        self.d_max = d_max
+        if delta_min is not None:
+            self.delta_min = delta_min
+        else:
+            self.delta_min = delta_scale * d_min
+        if delta_max is not None:
+            self.delta_max = delta_max
+        else:
+            self.delta_max = delta_scale * d_max
+
+        self.d_min[I] = 0.0
+        self.d_max[I] = 0.0
+        self.delta_min[I] = 1.0
+        self.delta_max[I] = 1.0
+
+    def calculate(self, atoms, properties, system_changes):
+        Calculator.calculate(self, atoms, properties, system_changes)
+
+        def vecsum(A,B):
+            return np.einsum('ij,ijk->ik',A,B)
+
+        r = atoms.get_positions()
+        dr = r[:,np.newaxis,:]-r
+        d = np.sqrt(np.einsum('ijk,ijk->ij',dr,dr))
+        dwI = d+np.identity(len(d))
+
+        d_rep = np.fmin(0.0,d-self.d_min)
+        d_att = np.fmax(0.0,d-self.d_max)
+
+        e_rep = d_rep**2/(self.delta_min)**2
+        e_att = d_att**2/(self.delta_max)**2
+        f0 = e_rep + e_att
+
+        f1 = 2.0*( d_rep/(self.delta_min)**2 \
+                  +d_att/(self.delta_max)**2 )
+
+        grad_en = vecsum(f1/dwI,dr)
+
+        e = 0.5*f0.sum()
+        f = -grad_en
+
+        self.results = {'energy': e,
+                        'forces': f,
+                        'emat_rep':e_rep,
+                        'emat_att':e_att}
+
+class FB_ENM_Bonds(FB_ENM):
+    """All atom FB-ENM featuring chemical bonds
+    """
+
+    implemented_properties = ['energy', 'forces']
+
+    def __init__(self,
+                 images,
+                 addA=None,
+                 delA=None,
+                 delta_scale=0.2,
+                 bond_scale=1.25,
+                 fix_planes=True,
+                 d_min_overwrite=None,
+                 d_max_overwrite=None,
+                 A_overwrite=None,):
+
+        cov_radii = covalent_radii[images[0].arrays['numbers']]
+        r_cov = cov_radii + cov_radii[:,None]
+        v_radii = vdw_radii[images[0].arrays['numbers']]
+        r_vdw = v_radii + v_radii[:,None]
+
+        nimages = len(images)
+        natoms = len(images[0])
+
+        d_mins = np.zeros([nimages,natoms,natoms])
+        d_maxs = np.zeros([nimages,natoms,natoms])
+
+        if fix_planes:
+            addA_p = np.zeros([natoms,natoms],dtype='bool')
+            planes = get_planes(images,bond_scale=bond_scale)
+            for p in planes:
+                addA_p[np.ix_(p,p)] = True
+
+        for i,image in enumerate(images):
+            d = image.get_all_distances()
+            A = (d/r_cov)<bond_scale
+            A = A@A
+
+            if fix_planes:
+                A = A|addA_p
+
+            if addA is not None:
+                A = A|addA
+
+            if delA is not None:
+                A = A&(~delA)
+
+            d_mins[i] = np.where(A,d,np.fmin(d,r_vdw))
+            d_maxs[i] = np.where(A,d,2.0*np.max(d))
+
+        d_min = np.min(d_mins,axis=0)
+        if d_min_overwrite is not None:
+            d_min[A_overwrite] = d_min_overwrite[A_overwrite]
+
+        d_max = np.max(d_maxs,axis=0)
+        if d_max_overwrite is not None:
+            d_max[A_overwrite] = d_max_overwrite[A_overwrite]
+
+        super().__init__(d_min,d_max,delta_scale=delta_scale)
+
+
+def get_planes(images,bond_scale=1.25,tol_rmsd=0.03,tol_ang=10.0):
+
+    def rmsd(pos,c4):
+        x = pos[c4]
+        cent = np.mean(x, axis=0)
+        _, _, vh = np.linalg.svd(x-cent)
+        v = vh[-1, :]
+        d = np.dot(x-cent, v)
+        return np.sqrt(np.mean(d**2))
+
+    def is_not_linear(atoms,c4):
+        ang0 = atoms.get_angle(*c4[0:3])
+        ang1 = atoms.get_angle(*c4[1:4])
+        return 180.0-ang0>tol_ang and 180.0-ang1>tol_ang
+
+    def is_cis(atoms,c4):
+        dh = atoms.get_dihedral(*c4)
+        return np.cos(dh)>=0.0
+
+    def is_trans(atoms,c4):
+        dh = atoms.get_dihedral(*c4)
+        return np.cos(dh)<0.0
+
+    def is_connected(nghs,c4):
+        ret = c4[0] in nghs[c4[1]]
+        ret = ret and c4[1] in nghs[c4[2]]
+        ret = ret and c4[2] in nghs[c4[3]]
+        return ret
+
+    def is_connected_center(nghs,c4):
+        ret = c4[0] in nghs[c4[1]]
+        ret = ret and c4[0] in nghs[c4[2]]
+        ret = ret and c4[0] in nghs[c4[3]]
+        return ret
+
+    for iimg, atoms in enumerate(images):
+
+        pos = atoms.get_positions()
+        cov_radii = covalent_radii[atoms.arrays['numbers']]
+        r_cov = cov_radii + cov_radii[:,None]
+        d = atoms.get_all_distances()
+        A = (d/r_cov)<bond_scale
+        np.fill_diagonal(A,False)
+        nghs = []
+        for l in A:
+            nghs.append(np.where(l)[0])
+
+        if iimg==0:
+            path = []
+            c4s = []
+            def next(i):
+                if i not in path:
+                    path.append(i)
+                    if len(path)==4:
+                        if path[0]<path[3]:
+                            c4s.append(list(path))
+                    else:
+                        for j in nghs[i]:
+                            next(j)
+                    path.pop()
+
+            for i in range(len(atoms)):
+                next(i)
+
+            c4s_center = []
+            for i0 in range(len(atoms)):
+                nngh = len(nghs[i0])
+                if nngh>=3:
+                    for i1 in range(nngh):
+                        for i2 in range(i1+1,nngh):
+                            for i3 in range(i2+1,nngh):
+                                c4s_center.append([i0,
+                                                   nghs[i0][i1],
+                                                   nghs[i0][i2],
+                                                   nghs[i0][i3]])
+
+            pels_cis = [c4 for c4 in c4s if (rmsd(pos,c4)<tol_rmsd
+                                             and is_not_linear(atoms,c4)
+                                             and is_cis(atoms,c4))]
+            pels_trans = [c4 for c4 in c4s if (rmsd(pos,c4)<tol_rmsd
+                                             and is_not_linear(atoms,c4)
+                                             and is_trans(atoms,c4))]
+            pels_center = [c4 for c4 in c4s_center if (rmsd(pos,c4)<tol_rmsd)]
+
+        else:
+            pels_cis = [c4 for c4 in pels_cis
+                           if (rmsd(pos,c4)<tol_rmsd
+                               and is_not_linear(atoms,c4)
+                               and is_cis(atoms,c4)
+                               and is_connected(nghs,c4))]
+            pels_trans = [c4 for c4 in pels_trans
+                             if (rmsd(pos,c4)<tol_rmsd
+                                 and is_not_linear(atoms,c4)
+                                 and is_trans(atoms,c4)
+                                 and is_connected(nghs,c4))]
+            pels_center = [c4 for c4 in pels_center
+                              if (rmsd(pos,c4)<tol_rmsd
+                                  and is_connected_center(nghs,c4))]
+
+    pels = [set(pel) for pel in pels_cis+pels_trans+pels_center]
+
+    planes = []
+    pels_del = []
+
+    while len(pels)>0:
+        if len(pels_del)==0:
+            planes.append(pels[-1])
+            pels.pop()
+
+        pels_del = [pel for pel in pels if len(planes[-1]&pel)>=3]
+        pels = [pel for pel in pels if len(planes[-1]&pel)<3]
+        planes[-1] = planes[-1].union(*pels_del)
+
+    return [sorted(p) for p in planes]
+
+
+
+
+def interpolate_fbenm(
         ref_images,nmove=10,
-        output_file='idpp_ipopt.out',
-        check_collisions=False,
-        soft_core=False,
-        dmf_options={}):
+        output_file='fbenm_ipopt.out',
+        fbenm_options={},
+        dmf_options={},
+        ):
 
     mxflx = DirectMaxFlux(ref_images,
                           nmove=nmove,
                           update_teval=False,
-                          check_collisions=check_collisions,
                           **dmf_options)
 
-    d1 = ref_images[0].get_all_distances()
-    d2 = ref_images[-1].get_all_distances()
-    d = (d2 - d1) / (nmove + 1)
-
     for i,image in enumerate(mxflx.images):
-        if soft_core:
-            image.calc = SIDPP(d1+i*d,mic=False)
-        else:
-            image.calc = IDPP(d1+i*d,mic=False)
+        image.calc = FB_ENM_Bonds(ref_images, **fbenm_options)
 
-    options = {
-        'tol': 0.01,
+    options ={
+        'tol': 0.1,
         'dual_inf_tol': 0.01,
         'constr_viol_tol': 0.01,
         'compl_inf_tol': 0.01,
@@ -1209,61 +1415,20 @@ def interpolate_idpp(
         'limited_memory_initialization':'constant',
         'limited_memory_init_val':2.5,
         'accept_every_trial_step':'yes',
-        'max_iter':500,
         'output_file':output_file,
         }
     mxflx.add_ipopt_options(options)
 
-    w_eval0 = mxflx.w_eval.copy()
-    b_scale = 3.0
+    b_scale = 5.0
 
-    #for i in range(5):
-    #    mxflx.get_forces()
-    #    ens = mxflx.energies.copy()
-    #    print(ens)
-    #    if np.amax(ens)>0.0:
-    #        mxflx.beta=b_scale/np.amax(ens)
-    #    else:
-    #        mxflx.beta=1.0
+    for _ in range(5):
+        mxflx.get_forces()
+        ens = mxflx.energies.copy()
+        if np.amax(ens)>0.0:
+            mxflx.beta = b_scale/np.amax(ens)
+        else:
+            mxflx.beta = 1.0
 
-    #    if i<3:
-    #        mxflx.solve(tol=0.1)
-    #    else:
-    #        mxflx.solve(tol=0.01)
-
-    if check_collisions:
-        for i in range(5):
-            mxflx.get_forces()
-            ens = mxflx.energies.copy()
-            if np.amax(ens)>0.0:
-                mxflx.beta=b_scale/np.amax(ens)
-            else:
-                mxflx.beta=1.0
-
-            if i<3:
-                mxflx.solve(tol=0.1)
-            else:
-                mxflx.solve(tol=0.01)
-    else:
-        for i in range(1,(nmove+1)//2+4):
-            mxflx.get_forces()
-            ens = mxflx.energies.copy()
-            w_eval = w_eval0.copy()
-            if i+1 < nmove+1-i:
-                ens[i+1:nmove+1-i] = 0.0
-                w_eval[i+1:nmove+1-i] = 0.0
-            if np.amax(ens)>0.0:
-                mxflx.beta=b_scale/np.amax(ens)
-            else:
-                mxflx.beta=1.0
-            mxflx.set_w_eval(w_eval)
-
-            if i<(nmove+1)//2:
-                mxflx.solve(tol=0.01)
-            else:
-                mxflx.solve(tol=0.01)
-
-    emax=np.amax(mxflx.energies)
-    print(f'emax: {emax:.5e}')
+        mxflx.solve()
 
     return mxflx
