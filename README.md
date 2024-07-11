@@ -12,7 +12,7 @@ from dmf import DirectMaxFlux, interpolate_fbenm
 ref_images = [read('react.xyz'), read('prod.xyz')]
 
 # generate initial path by FB-ENM
-mxflx_fbenm = interpolate_fbenm(ref_images)
+mxflx_fbenm = interpolate_fbenm(ref_images,correlated=True)
 
 # write initial path and its coefficients
 write('sample_ini.traj',mxflx_fbenm.images)
@@ -62,9 +62,11 @@ Currently, only non-periodic systems are supported.
 ## Citation
 
  1. S.-i. Koda and  S. Saito, Locating Transition States by Variational Reaction Path Optimization with an Energy-Derivative-Free Objective Function, JCTC, 20, 2798–2811 (2024). [doi: 10.1021/acs.jctc.3c01246](https://doi.org/10.1021/acs.jctc.3c01246)
- 1. S.-i. Koda and  S. Saito, ChemRxiv (submitted)
+ 1. S.-i. Koda and  S. Saito, A Flat-bottom Elastic Network Model for Generating Improved Plausible Reaction Paths, ChemRxiv (2024). [doi: 10.26434/chemrxiv-2024-h15dh](https://doi.org/10.26434/chemrxiv-2024-h15dh)
+ 1. S.-i. Koda and  S. Saito, A Correlated Flat-bottom Elastic Network Model for Improved Bond Rearrangement in Reaction Paths, ChemRxiv (2024). [doi: ](https://doi.org/)
 
 Please cite:
 
  - Ref. 1 when you use the direct MaxFlux method
  - Ref. 2 when you use the flat-bottom elasitic network model
+ - Ref. 3 when you use the correlated flat-bottom elasitic network model

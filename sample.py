@@ -7,7 +7,7 @@ from dmf import DirectMaxFlux, interpolate_fbenm
 ref_images = [read('react.xyz'), read('prod.xyz')]
 
 # generate initial path by FB-ENM
-mxflx_fbenm = interpolate_fbenm(ref_images)
+mxflx_fbenm = interpolate_fbenm(ref_images,correlated=True)
 
 # write initial path and its coefficients
 write('sample_ini.traj',mxflx_fbenm.images)

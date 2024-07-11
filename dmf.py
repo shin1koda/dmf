@@ -12,6 +12,7 @@ import cyipopt
 import ase.parallel
 from ase.utils import lazyproperty
 from ase.calculators.calculator import Calculator
+from ase.calculators.mixing import SumCalculator
 from ase.data import covalent_radii
 from ase.data.vdw_alvarez import vdw_radii
 
@@ -1271,6 +1272,172 @@ class FB_ENM_Bonds(FB_ENM):
 
         super().__init__(d_min,d_max,delta_scale=delta_scale)
 
+class CFB_ENM(Calculator):
+    """General form of Flat Bottom Elastic Network Model
+    """
+
+    implemented_properties = ['energy', 'forces']
+
+    def __init__(self, images, bond_scale=1.25,
+                 d_corr0=None, corr0_scale=1.10,
+                 d_corr1=None, corr1_scale=1.50,
+                 d_corr2=None, corr2_scale=1.60,
+                 eps=0.05,
+                 pivotal=True,
+                 single=True,
+                 remove_fourmembered=True,
+                 ):
+
+        Calculator.__init__(self)
+
+        cov_radii = covalent_radii[images[0].arrays['numbers']]
+        r_cov = cov_radii + cov_radii[:,None]
+
+        nimages = len(images)
+        natoms = len(images[0])
+
+        d_bonds = np.zeros([nimages,natoms,natoms])
+
+        Js = []
+        for i,image in enumerate(images):
+            d = image.get_all_distances()
+            J = (d/r_cov)<bond_scale
+            np.fill_diagonal(J,False)
+            Js.append(J)
+
+            d_bonds[i] = np.where(J,d,0.0)
+
+        self.d_bond = np.max(d_bonds,axis=0)
+
+        J_only_r = Js[0]&(~Js[-1])
+        J_only_p = Js[-1]&(~Js[0])
+        J_both = Js[0]&Js[-1]
+
+        self.quartets = self.get_quartets(
+                            J_only_r,J_only_p,J_both,
+                            pivotal=pivotal,single=single,
+                            remove_fourmembered=remove_fourmembered)
+
+        if d_corr0 is not None:
+            self.d_corr0 = d_corr0
+        else:
+            self.d_corr0 = corr0_scale * self.d_bond
+
+        if d_corr1 is not None:
+            self.d_corr1 = d_corr1
+        else:
+            self.d_corr1 = corr1_scale * self.d_bond
+
+        if d_corr2 is not None:
+            self.d_corr2 = d_corr2
+        else:
+            self.d_corr2 = corr2_scale * self.d_bond
+
+        self.eps = eps
+
+        I = np.identity(natoms,dtype='bool')
+        self.d_bond[I] = 0.0
+        self.d_corr0[I] = 0.0
+        self.d_corr1[I] = 0.0
+        self.d_corr2[I] = 0.0
+
+    def get_quartets(self,J_only_r,J_only_p,J_both,
+            pivotal=True,single=True,remove_fourmembered=True):
+
+        J2 = J_both@J_both
+
+        if pivotal:
+            quartets = []
+            if single:
+                pivots = np.where((np.sum(J_only_r,axis=1)==1)
+                                        &(np.sum(J_only_p,axis=1)==1))[0]
+            else:
+                pivots = np.where(np.any(J_only_r,axis=1)
+                                        &np.any(J_only_p,axis=1))[0]
+            for i in pivots:
+                only_r = np.where(J_only_r[i])[0]
+                only_p = np.where(J_only_p[i])[0]
+                for j in only_r:
+                    for k in only_p:
+                        if (not (remove_fourmembered and J2[j,k])):
+                            quartets.append([i,j,i,k])
+
+        else:
+            pairs_only_r = []
+            pairs_only_p = []
+            for i in range(len(J_only_r)):
+                for j in range(i):
+                    if J_only_r[i,j]:
+                        pairs_only_r.append([i,j])
+                    if J_only_p[i,j]:
+                        pairs_only_p.append([i,j])
+
+            quartets = []
+            for pr in pairs_only_r:
+                for pp in pairs_only_p:
+                    q = pr+pp
+
+                    if remove_fourmembered:
+                        uniq_idxs = [q[i] for i in range(4) if q.count(q[i])==1]
+
+                        if len(uniq_idxs)==4:
+                            is_fourmembered = \
+                                (J_both[q[0],q[2]] and J_both[q[1],q[3]]) \
+                                or (J_both[q[0],q[3]] and J_both[q[1],q[2]])
+                        else:
+                            is_fourmembered = J2[uniq_idxs[0],uniq_idxs[1]]
+
+                        if is_fourmembered:
+                            continue
+
+                    quartets.append(q)
+
+        return quartets
+
+    def calculate(self, atoms, properties, system_changes):
+        Calculator.calculate(self, atoms, properties, system_changes)
+
+        r = atoms.get_positions()
+        dr = r[:,np.newaxis,:]-r
+        d = np.sqrt(np.einsum('ijk,ijk->ij',dr,dr))
+
+        e = 0.0
+        forces = np.zeros([len(atoms),3])
+
+        d_d0 = d - self.d_corr0
+        d1_d0 = self.d_corr1 - self.d_corr0
+        d2_d0 = self.d_corr2 - self.d_corr0
+
+        for i,t in enumerate(self.quartets):
+            pp = (d_d0[t[0],t[1]]*d_d0[t[2],t[3]]
+                   - d1_d0[t[0],t[1]]*d1_d0[t[2],t[3]])
+
+            if (d_d0[t[0],t[1]]>0.0 and d_d0[t[2],t[3]]>0.0 and pp>0.0):
+
+                v1 = d_d0[t[2],t[3]]/d[t[0],t[1]]*(r[t[0]]-r[t[1]])
+                v2 = d_d0[t[0],t[1]]/d[t[2],t[3]]*(r[t[2]]-r[t[3]])
+
+                dnm = ( d2_d0[t[0],t[1]]*d2_d0[t[2],t[3]]
+                      - d1_d0[t[0],t[1]]*d1_d0[t[2],t[3]])
+
+                pp /= dnm
+                v1 /= dnm
+                v2 /= dnm
+
+                sqrt_pp2 = np.sqrt(pp**2+self.eps**2)
+
+                alpha = pp/sqrt_pp2
+
+                e += sqrt_pp2-self.eps
+
+                forces[t[0]] -= alpha*v1
+                forces[t[1]] += alpha*v1
+                forces[t[2]] -= alpha*v2
+                forces[t[3]] += alpha*v2
+
+        self.results = {'energy': e,
+                        'forces': forces}
+
 
 def get_planes(images,bond_scale=1.25,tol_rmsd=0.03,tol_ang=10.0):
 
@@ -1393,7 +1560,9 @@ def get_planes(images,bond_scale=1.25,tol_rmsd=0.03,tol_ang=10.0):
 def interpolate_fbenm(
         ref_images,nmove=10,
         output_file='fbenm_ipopt.out',
+        correlated=True,
         fbenm_options={},
+        cfbenm_options={},
         dmf_options={},
         ):
 
@@ -1403,7 +1572,12 @@ def interpolate_fbenm(
                           **dmf_options)
 
     for i,image in enumerate(mxflx.images):
-        image.calc = FB_ENM_Bonds(ref_images, **fbenm_options)
+        if correlated:
+            image.calc = SumCalculator([
+                             FB_ENM_Bonds(ref_images, **fbenm_options),
+                             CFB_ENM(ref_images,**cfbenm_options)])
+        else:
+            image.calc = FB_ENM_Bonds(ref_images, **fbenm_options)
 
     options ={
         'tol': 0.1,
@@ -1416,6 +1590,7 @@ def interpolate_fbenm(
         'limited_memory_init_val':2.5,
         'accept_every_trial_step':'yes',
         'output_file':output_file,
+        'max_iter':500,
         }
     mxflx.add_ipopt_options(options)
 
@@ -1429,6 +1604,6 @@ def interpolate_fbenm(
         else:
             mxflx.beta = 1.0
 
-        mxflx.solve()
+        mxflx.solve(tol=0.1)
 
     return mxflx
