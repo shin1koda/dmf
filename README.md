@@ -62,8 +62,8 @@ Currently, only non-periodic systems are supported.
 ## Citation
 
  1. S.-i. Koda and  S. Saito, Locating Transition States by Variational Reaction Path Optimization with an Energy-Derivative-Free Objective Function, JCTC, 20, 2798–2811 (2024). [doi: 10.1021/acs.jctc.3c01246](https://doi.org/10.1021/acs.jctc.3c01246)
- 1. S.-i. Koda and  S. Saito, A Flat-bottom Elastic Network Model for Generating Improved Plausible Reaction Paths, ChemRxiv (2024). [doi: 10.26434/chemrxiv-2024-h15dh](https://doi.org/10.26434/chemrxiv-2024-h15dh)
- 1. S.-i. Koda and  S. Saito, A Correlated Flat-bottom Elastic Network Model for Improved Bond Rearrangement in Reaction Paths, ChemRxiv (2024). [doi: ](https://doi.org/)
+ 1. S.-i. Koda and  S. Saito, A Flat-bottom Elastic Network Model for Generating Improved Plausible Reaction Paths, JCTC (2024). [doi: 10.1021/acs.jctc.4c00792](https://doi.org/10.1021/acs.jctc.4c00792)
+ 1. S.-i. Koda and  S. Saito, A Correlated Flat-bottom Elastic Network Model for Improved Bond Rearrangement in Reaction Paths, ChemRxiv (2024). [doi: 10.26434/chemrxiv-2024-4vrx9-v2](https://doi.org/10.26434/chemrxiv-2024-4vrx9-v2)
 
 Please cite:
 

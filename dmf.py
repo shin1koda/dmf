@@ -1439,7 +1439,7 @@ class CFB_ENM(Calculator):
                         'forces': forces}
 
 
-def get_planes(images,bond_scale=1.25,tol_rmsd=0.03,tol_ang=10.0):
+def get_planes(images,bond_scale=1.25,tol_rmsd=0.05,tol_ang=10.0):
 
     def rmsd(pos,c4):
         x = pos[c4]
@@ -1456,11 +1456,11 @@ def get_planes(images,bond_scale=1.25,tol_rmsd=0.03,tol_ang=10.0):
 
     def is_cis(atoms,c4):
         dh = atoms.get_dihedral(*c4)
-        return np.cos(dh)>=0.0
+        return np.cos(np.pi/180*dh)>=0.0
 
     def is_trans(atoms,c4):
         dh = atoms.get_dihedral(*c4)
-        return np.cos(dh)<0.0
+        return np.cos(np.pi/180*dh)<0.0
 
     def is_connected(nghs,c4):
         ret = c4[0] in nghs[c4[1]]
@@ -1540,6 +1540,7 @@ def get_planes(images,bond_scale=1.25,tol_rmsd=0.03,tol_ang=10.0):
 
     pels = [set(pel) for pel in pels_cis+pels_trans+pels_center]
 
+
     planes = []
     pels_del = []
 
@@ -1555,12 +1556,12 @@ def get_planes(images,bond_scale=1.25,tol_rmsd=0.03,tol_ang=10.0):
     return [sorted(p) for p in planes]
 
 
-
-
 def interpolate_fbenm(
         ref_images,nmove=10,
         output_file='fbenm_ipopt.out',
         correlated=True,
+        sequential=True,
+        fbenm_only_endpoints=True,
         fbenm_options={},
         cfbenm_options={},
         dmf_options={},
@@ -1571,13 +1572,18 @@ def interpolate_fbenm(
                           update_teval=False,
                           **dmf_options)
 
+    if fbenm_only_endpoints:
+        fbenm_images = [ref_images[0].copy(),ref_images[-1].copy()]
+    else:
+        fbenm_images = [image.copy() for image in ref_images]
+
     for i,image in enumerate(mxflx.images):
         if correlated:
             image.calc = SumCalculator([
-                             FB_ENM_Bonds(ref_images, **fbenm_options),
-                             CFB_ENM(ref_images,**cfbenm_options)])
+                             FB_ENM_Bonds(fbenm_images, **fbenm_options),
+                             CFB_ENM(fbenm_images,**cfbenm_options)])
         else:
-            image.calc = FB_ENM_Bonds(ref_images, **fbenm_options)
+            image.calc = FB_ENM_Bonds(fbenm_images, **fbenm_options)
 
     options ={
         'tol': 0.1,
@@ -1594,8 +1600,25 @@ def interpolate_fbenm(
         }
     mxflx.add_ipopt_options(options)
 
-    b_scale = 5.0
 
+    if sequential:
+        b_scale = 3.0
+        w_eval0 = mxflx.w_eval.copy()
+        for i in range((nmove+1)//2):
+            mxflx.get_forces()
+            ens = mxflx.energies.copy()
+            w_eval = w_eval0.copy()
+            ens[i+2:nmove-i]=0.0
+            w_eval[i+2:nmove-i]=0.0
+            if np.amax(ens)>0.0:
+                mxflx.beta=b_scale/np.amax(ens)
+            else:
+                mxflx.beta=1.0
+            mxflx.set_w_eval(w_eval)
+
+            mxflx.solve(tol=0.1)
+
+    b_scale = 5.0
     for _ in range(5):
         mxflx.get_forces()
         ens = mxflx.energies.copy()
