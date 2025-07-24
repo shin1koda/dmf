@@ -51,6 +51,15 @@ write('sample_tmax.traj',mxflx.history.images_tmax)
 pip install git+https://github.com/shin1koda/dmf.git
 ```
 
+ - We recommend installing this module via conda, as we’ve received several reports that instalation of the PyPI version of IPOPT fails.
+
+```
+conda create -n dmf python=3.6
+conda activate dmf
+conda install -c conda-forge ase cyipopt
+pip install git+https://github.com/shin1koda/dmf.git
+```
+
 ## Documentation
 
 See this [GitHub Pages](https://shin1koda.github.io/dmf/).
@@ -62,8 +71,8 @@ Currently, only non-periodic systems are supported.
 ## Citation
 
  1. S.-i. Koda and  S. Saito, Locating Transition States by Variational Reaction Path Optimization with an Energy-Derivative-Free Objective Function, JCTC, 20, 2798–2811 (2024). [doi: 10.1021/acs.jctc.3c01246](https://doi.org/10.1021/acs.jctc.3c01246)
- 1. S.-i. Koda and  S. Saito, A Flat-bottom Elastic Network Model for Generating Improved Plausible Reaction Paths, JCTC (2024). [doi: 10.1021/acs.jctc.4c00792](https://doi.org/10.1021/acs.jctc.4c00792)
- 1. S.-i. Koda and  S. Saito, A Correlated Flat-bottom Elastic Network Model for Improved Bond Rearrangement in Reaction Paths, ChemRxiv (2024). [doi: 10.26434/chemrxiv-2024-4vrx9-v2](https://doi.org/10.26434/chemrxiv-2024-4vrx9-v2)
+ 1. S.-i. Koda and  S. Saito, Flat-bottom Elastic Network Model for Generating Improved Plausible Reaction Paths, JCTC, 20, 7176−7187 (2024). [doi: 10.1021/acs.jctc.4c00792](https://doi.org/10.1021/acs.jctc.4c00792)
+ 1. S.-i. Koda and  S. Saito, Correlated Flat-bottom Elastic Network Model for Improved Bond Rearrangement in Reaction Paths, JCTC, 21, 3513−3522 (2025). [doi: 10.1021/acs.jctc.4c01549](https://doi.org/10.1021/acs.jctc.4c01549)
 
 Please cite:
 
