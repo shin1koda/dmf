@@ -1360,7 +1360,7 @@ class CFB_ENM(Calculator):
                 for j in only_r:
                     for k in only_p:
                         if (not (remove_fourmembered and J2[j,k])):
-                            quartets.append([i,j,i,k])
+                            quartets.append(list(map(int,[i,j,i,k])))
 
         else:
             pairs_only_r = []
@@ -1596,7 +1596,7 @@ def interpolate_fbenm(
         'limited_memory_init_val':2.5,
         'accept_every_trial_step':'yes',
         'output_file':output_file,
-        'max_iter':500,
+        'max_iter':200,
         }
     mxflx.add_ipopt_options(options)
 
