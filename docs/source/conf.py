@@ -41,38 +41,3 @@ autodoc_member_order = 'bysource'
 html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
 
-# Optional: add custom CSS (if needed)
-# def setup(app):
-#     app.add_css_file("custom.css")
-
-
-
-#import sys, os
-#
-#sys.path.append(os.path.abspath('../../'))
-#
-#project = 'dmf'
-#copyright = '2024, Shin-ichi Koda'
-#author = 'Shin-ichi Koda'
-#release = '1.0'
-#
-## -- General configuration ---------------------------------------------------
-## https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
-#
-#extensions = ['sphinx.ext.autodoc',
-#              'sphinx.ext.napoleon',
-#              'sphinx.ext.mathjax',
-#              'sphinx.ext.githubpages']
-#
-#templates_path = ['_templates']
-#exclude_patterns = []
-#
-#napoleon_custom_sections = [('Returns', 'params_style')]
-#
-##autodoc_member_order = 'bysource'
-#
-## -- Options for HTML output -------------------------------------------------
-## https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
-#
-#html_theme = 'sphinx_rtd_theme'
-#html_static_path = ['_static']
