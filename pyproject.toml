@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dmf"
+version = "1.0.0"
+description = "Module of direct MaxFlux method and flat-bottom elastic network model for reaction path/transition state optimization."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Shin-ichi Koda", email = "koda@ims.ac.jp" }
+]
+dependencies = [
+    "ase>=3.22",
+]
+
+[project.optional-dependencies]
+cyipopt = ["cyipopt>=1.4"]
+
+[project.urls]
+Homepage = "https://github.com/shin1koda/dmf"
+Source = "https://github.com/shin1koda/dmf"
+Issues = "https://github.com/shin1koda/dmf/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["dmf*"]
+exclude = ["tests"]
+
