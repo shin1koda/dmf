@@ -1,0 +1,52 @@
+# ----------------------------------------
+# Python
+# ----------------------------------------
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+
+# Virtual environments
+env/
+venv/
+.dm_env/
+.dm_venv/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+
+# ----------------------------------------
+# Sphinx documentation
+# ----------------------------------------
+
+# Sphinx build directories
+docs/build/
+docs/_build/
+
+# Sphinx caches
+docs/.doctrees/
+docs/.buildinfo
+
+
+# ----------------------------------------
+# GitHub Pages (gh-pages branch)
+# ----------------------------------------
+
+# When gh-pages is checked out locally
+site/
+
