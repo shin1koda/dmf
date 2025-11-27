@@ -6,9 +6,9 @@ This package provides a Python implementation of the direct MaxFlux (DMF) method
 
 The software is intended for researchers who use ASE-compatible calculators and require either a method for obtaining near–transition-state structures without relying on second or higher energy derivatives, or a method for interpolating between two structures in a chemically plausible manner.
 
-Compared with existing double-ended reaction-path optimization methods (e.g., NEB), DMF improves computational efficiency in terms of both the number of energy-evaluation points along the path and the number of optimization iterations.
+ - Compared with existing double-ended reaction-path optimization methods (e.g., NEB), DMF improves computational efficiency in terms of both the number of energy-evaluation points along the path and the number of optimization iterations.
 
-Compared with existing initial-path generation approaches (e.g., IDPP), FB-ENM provides more energetically preferable paths with improved robustness.
+ - Compared with existing initial-path generation approaches (e.g., IDPP), FB-ENM provides more energetically preferable paths with improved robustness.
 
 
 ## Requirements
@@ -22,7 +22,7 @@ Compared with existing initial-path generation approaches (e.g., IDPP), FB-ENM p
 We generally recommend installing this package via **conda**, as `cyipopt` is most reliably installed through conda.
 
 ```bash
-conda create -n dmf python=3.6
+conda create -n dmf python=3.10
 conda activate dmf
 conda install -c conda-forge ase cyipopt
 pip install git+https://github.com/shin1koda/dmf.git
