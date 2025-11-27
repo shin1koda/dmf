@@ -1,7 +1,46 @@
 # Direct MaxFlux method
-A Python implementation of the direct MaxFlux method for transition state search
 
-sample.py
+## Overview
+
+This package provides a Python implementation of the direct MaxFlux (DMF) method and the flat-bottom elastic network model (FB-ENM). These tools offer a variational framework for reaction-path optimization and an efficient approach to generating physically plausible initial paths.
+
+The software is intended for researchers who use ASE-compatible calculators and require either a method for obtaining near–transition-state structures without relying on second or higher energy derivatives, or a method for interpolating between two structures in a chemically plausible manner.
+
+Compared with existing double-ended reaction-path optimization methods (e.g., NEB), DMF improves computational efficiency in terms of both the number of energy-evaluation points along the path and the number of optimization iterations.
+
+Compared with existing initial-path generation approaches (e.g., IDPP), FB-ENM provides more energetically preferable paths with improved robustness.
+
+
+## Requirements
+
+- [ASE](https://ase-lib.org/)
+- [cyipopt](https://cyipopt.readthedocs.io/en/stable/)
+
+
+## Installation
+
+We generally recommend installing this package via **conda**, as `cyipopt` is most reliably installed through conda.
+
+```bash
+conda create -n dmf python=3.6
+conda activate dmf
+conda install -c conda-forge ase cyipopt
+pip install git+https://github.com/shin1koda/dmf.git
+```
+
+If you prefer to install `cyipopt` without using conda, please follow its [official installation guide](https://cyipopt.readthedocs.io/en/stable/install.html).
+**After installing cyipopt**, you can install `dmf` via pip:
+
+```bash
+pip install git+https://github.com/shin1koda/dmf.git
+```
+
+
+## Example usage
+
+`dmf` is used as part of an ASE script. For the basics of ASE, please refer to its [official documentation](https://ase-lib.org/gettingstarted/gettingstarted.html).
+An example script is provided in `sample/sample.py`:
+
 ```python
 import numpy as np
 from ase.io import write, read
@@ -35,38 +74,24 @@ write('sample_fin.traj',mxflx.images)
 write('sample_tmax.traj',mxflx.history.images_tmax)
 ```
 
-## Requirements
+You can run it simply by:
 
-- NumPy
-- SciPy
-- [ASE](https://wiki.fysik.dtu.dk/ase/)
-- [cyipopt](https://cyipopt.readthedocs.io/en/stable/)
-
-## Installation
-
- - If you want to try the direct MaxFlux method once for now, it is sufficient to install the above requirements and copy dmf.py to the directory where your script is located.
- - If you want to install this module on your system, you can install it using a command like:
-
-```
-pip install git+https://github.com/shin1koda/dmf.git
+```bash
+cd sample
+python sample.py
 ```
 
- - We recommend installing this module via conda, as we’ve received several reports that instalation of the PyPI version of IPOPT fails.
+Running the script produces several output files, including:
 
-```
-conda create -n dmf python=3.6
-conda activate dmf
-conda install -c conda-forge ase cyipopt
-pip install git+https://github.com/shin1koda/dmf.git
-```
+ - `sample_ini.traj`: FB-ENM–interpolated path written in ASE trajectory format
+ - `sample_fin.traj`: Optimized reaction path using the EMT potential
+ - `sample_tmax.traj`: History of the estimated highest-energy point during optimization
+
 
 ## Documentation
 
-See this [GitHub Pages](https://shin1koda.github.io/dmf/).
+For more details, please refer to the [API documentation](https://shin1koda.github.io/dmf/).
 
-## Limitations
-
-Currently, only non-periodic systems are supported.
 
 ## Citation
 
@@ -77,5 +102,37 @@ Currently, only non-periodic systems are supported.
 Please cite:
 
  - Ref. 1 when you use the direct MaxFlux method
- - Ref. 2 when you use the flat-bottom elasitic network model
- - Ref. 3 when you use the correlated flat-bottom elasitic network model
+ - Ref. 2 when you use the flat-bottom elastic network model
+ - Ref. 3 when you use the correlated flat-bottom elastic network model
+
+
+## Community guidelines
+
+### Contributing
+
+Contributions to this project are welcome. If you would like to contribute new features, improvements, or documentation, please open a pull request on GitHub.  
+Before submitting a PR, we recommend opening a short issue to discuss the proposed change.
+
+### Reporting issues
+
+If you encounter a problem, unexpected behavior, or a potential bug, please report it through the GitHub issue tracker:
+
+https://github.com/shin1koda/dmf/issues
+
+When reporting an issue, please include:
+- A clear description of the problem  
+- Steps to reproduce the issue  
+- Your environment (Python version, ASE version, cyipopt version, etc.)  
+- Any relevant error messages or logs
+
+### Seeking support
+
+If you have questions about the usage of the package, or need help integrating it into your workflow, feel free to open an issue labeled “question” on GitHub.  
+We will do our best to provide guidance based on availability.
+
+
+## License
+
+This project is distributed under the MIT License.
+See the `LICENSE` file for details.
+
