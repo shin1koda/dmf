@@ -37,6 +37,13 @@ napoleon_custom_sections = [('Returns', 'params_style')]
 # autodoc settings
 autodoc_member_order = 'bysource'
 
+autodoc_default_options = {
+    'members': True,
+    'undoc-members': True,
+    'inherited-members': True,
+    'show-inheritance': True,
+}
+
 # --- Options for HTML output ---------------------------------------------------
 html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']

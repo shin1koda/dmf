@@ -14,6 +14,55 @@ def interpolate_fbenm(
         cfbenm_options={},
         dmf_options={},
         ):
+    """
+    Generate a plausible initial reaction path using FB-ENM or
+    FB-ENM + CFB-ENM in combination with the direct MaxFlux method.
+
+    This routine constructs a DirectMaxFlux object from the given
+    reference images (typically reactant and product) and assigns an
+    FB-ENM_Bonds calculator, optionally combined with CFB-ENM,
+    to each intermediate image. The DMF solver is then executed with
+    a β-update scheme (see FB-ENM's paper) to obtain a plausible path.
+
+    Parameters
+    ----------
+    ref_images : list of ase.Atoms
+        Reference structures defining the initial piecewise linear path
+        for the (C)FB-ENM optimization.
+    nmove : int, optional
+        Number of movable images. Default: 10.
+    output_file : str, optional
+        File name for IPOPT output. Default: 'fbenm_ipopt.out'.
+    correlated : bool, optional
+        If True, use FB-ENM + CFB-ENM (correlated ENM).
+        If False, use FB-ENM only. Default: True.
+    sequential : bool, optional
+        Whether to apply a sequential MaxFlux optimization scheme
+        that gradually activates interior points. Default: True.
+    fbenm_only_endpoints : bool, optional
+        If True, construct FB-ENM from only the first and last image.
+        If False, use all ref_images for FB-ENM construction.
+        Default: True.
+    fbenm_options : dict, optional
+        Keyword arguments forwarded to `FB_ENM_Bonds`.
+    cfbenm_options : dict, optional
+        Keyword arguments forwarded to `CFB_ENM`.
+    dmf_options : dict, optional
+        Keyword arguments forwarded to `DirectMaxFlux`.
+
+    Returns
+    -------
+    mxflx : DirectMaxFlux
+        The DirectMaxFlux object after the (C)FB-ENM optimization.
+
+    Notes
+    -----
+    - The returned DirectMaxFlux instance retains all images with their
+      assigned ENM calculators, and can be used directly for subsequent
+      accurate (first-principles) MaxFlux optimization.
+    - For details of FB-ENM and CFB-ENM, see the corresponding papers.
+    """
+
 
     mxflx = DirectMaxFlux(ref_images,
                           nmove=nmove,

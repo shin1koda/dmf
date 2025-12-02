@@ -1,13 +1,14 @@
 .. dmf documentation master file
 
-Documentation of shin1koda/dmf
-==============================
+.. automodule:: dmf
+   :no-members:
+   :no-imported-members:
+   :no-special-members:
+   :no-undoc-members:
+   :no-inherited-members:
+   :exclude-members: *
 
-`dmf` is a Python package implementing the Direct MaxFlux (DMF) method
-and related utilities. When using this package in your research,
-please cite:
 
-[1] Shin-ichi Koda and Shinji Saito, J. Chem. Theory Comput. (2024).
 
 Contents
 --------

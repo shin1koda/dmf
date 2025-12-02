@@ -1,7 +1,5 @@
 import threading
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import List
 
 import numpy as np
 from numpy.polynomial import polynomial as P
@@ -9,60 +7,233 @@ from scipy.interpolate import BSpline,interp1d
 from scipy.spatial.transform import Rotation
 import cyipopt
 
-from ase import Atoms
 import ase.parallel
-from ase.utils import lazyproperty
-
+from functools import cached_property
 
 
 class HistoryBase():
-    """Object storing histories of some properties.
-
-    Attributes:
-        forces (list of numpy.ndarray):
-        energies (list of numpy.ndarray):
-        coefs (list of numpy.ndarray):
-        angs (list of numpy.ndarray):
-        tmax (list of float):
-        images_tmax (list of ase.Atoms):
-        duals (list of float):
     """
+    Container storing the optimization history of the VariationalPathOpt.
+
+    This object collects various physical and numerical quantities evaluated
+    along the reaction path during the optimization.  At each IPOPT iteration,
+    the ``VariationalPathOpt.intermediate`` method appends the current values
+    of these quantities to the corresponding lists below.
+
+    Attributes
+    ----------
+    forces : list of ndarray
+        History of ``VariationalPathOpt.forces``.
+    energies : list of ndarray
+        History of ``VariationalPathOpt.energies``.
+    coefs : list of ndarray
+        History of ``VariationalPathOpt.coefs``.
+    angs : list of ndarray
+        History of ``VariationalPathOpt.angs``.
+    tmax : list of float
+        History of the location ``t_max`` corresponding to the maximum
+        interpolated energy along the path. See Ref. 1 for details.
+    images_tmax : list of ase.Atoms
+        History of the atomic structure at ``t = t_max``, providing an
+        approximate transition-state geometry at each iteration.
+    duals : list of float
+        History of the scaled dual infeasibility (IPOPT diagnostic).
+
+    """
+
     def __init__(self):
-        self.forces=[]
-        self.energies=[]
-        self.coefs=[]
-        self.angs=[]
-        self.tmax=[]
-        self.images_tmax=[]
-        self.duals=[]
+        self.forces = []
+        self.energies = []
+        self.coefs = []
+        self.angs = []
+        self.tmax = []
+        self.images_tmax = []
+        self.duals = []
 
-class GeometricAction(ABC,cyipopt.Problem):
-    """Class for general variational reaction path optimization.
 
-    This class defines vaiational problems with the objective functional
-    I[x(t)] = \int^{1}_{0} dt |v(t)| F(x(t)).
+class VariationalPathOpt(ABC, cyipopt.Problem):
+    r"""
+    Abstract base class for variational reaction–path optimization.
 
-    Attributes:
-        images (list of ase.Atoms):
-        t_eval (numpy.ndarray):
-        w_eval (numpy.ndarray):
-        coefs (numpy.ndarray):
-        angs (numpy.ndarray):
-        energies (numpy.ndarray):
-        forces (numpy.ndarray):
-        history (History object):
-        remove_rotation_and_translation (bool):
-        natoms (int):
-        nsegs (int):
-        dspl (int):
-        nbasis (int):
-        n_vel (int):
-        n_trans (int):
-        n_rot (int):
-        eps_vel (float):
-        eps_rot (float):
-        ipopt_options (dict):
+    This class formulates a general functional
+
+    .. math::
+
+        \tilde{I}[x(t)] = K(I[x(t)]),
+
+    where
+
+    .. math::
+
+        I[x(t)] = \int_0^1 dt\, \vert \dot{x}(t) \vert \, F(x(t)).
+
+    The functions \(K(I)\), \(F(x)\), and their derivatives are supplied
+    by concrete subclasses. Subclasses (e.g., ``DirectMaxFlux``) must
+    implement
+
+    - ``_get_objective``          — returns \( K(I) \)
+    - ``_get_grad_objective``     — returns the gradient of the objective
+      with respect to the internal optimization variables
+    - ``_get_func_en``            — returns \(F(E)\) and \(dF/dE\)
+
+    See their docstrings for details.
+
+    Additional features include:
+    - construction of initial B-spline coefficients from ``ref_images``
+    - optional removal of translational and rotational redundancy
+    - parallel energy/force evaluation (threads or MPI)
+
+
+    Parameters
+    ----------
+
+    ref_images : list of ase.Atoms
+        List of atomic structures representing an initial guess for the path.
+        If ``coefs`` is **not** provided, a piecewise linear interpolation
+        through ``ref_images`` is constructed, and B-spline coefficients are
+        obtained by fitting this interpolated path.  
+        If ``coefs`` **is** provided, no interpolation is performed:
+        ``ref_images[0]`` is used only to extract atomic numbers, masses,
+        cell, and PBC settings.
+
+    coefs : ndarray of shape ``(nbasis, natoms, 3)``, optional
+        Initial B-spline coefficients. If provided, interpolation from
+        ``ref_images`` is skipped and these coefficients define the initial
+        path. Default: None.
+
+    nsegs : int, optional
+        Number of B-spline segments. The number of basis functions per
+        Cartesian degree of freedom is ``nbasis = nsegs + dspl``.
+        See Ref. 1 for details. Default: 4.
+
+    dspl : int, optional
+        Polynomial degree of the B-spline basis. Default: 3.
+
+    remove_rotation_and_translation : bool, optional
+        If True, remove global translational and rotational motion using
+        nonlinear constraints. Default: True.
+
+    mass_weighted : bool, optional
+        If True, the velocity norm \( \vert \dot{x}(t) \vert \) uses mass-weighted
+        coordinates. Default: False.
+
+    parallel : bool, optional
+        Evaluate energies and forces in parallel using threads or MPI.
+        Default: False.
+
+    world : MPI communicator, optional
+        Communicator used when ``parallel=True``. Defaults to
+        ``ase.parallel.world``.
+
+    t_eval : ndarray, optional
+        Energy evaluation points in \( t \in [0,1] \).  
+        If omitted, an even distribution
+        np.linspace(0.0,1.0,2*nsegs+1) is generated.
+
+    w_eval : ndarray of shape ``(len(t_eval),)``, optional
+        Quadrature weights for evaluating the integral
+
+        .. math::
+
+            I[x] \approx \sum_i w_i\, \vert \dot{x}(t) \vert \, e^{\beta E(x(t_i))}.
+
+        If omitted, trapezoidal weights are used.
+
+    n_vel : int, optional
+        Number of discretized velocity constraints.
+        Default: ``4 * nsegs``.
+
+    n_trans : int, optional
+        Number of translational constraints.
+        Default: ``2 * nsegs``.
+
+    n_rot : int, optional
+        Number of rotational constraints.
+        Default: ``2 * nsegs``.
+
+    eps_vel : float, optional
+        Tolerance for velocity constraints. Default: 0.01.
+
+    eps_rot : float, optional
+        Tolerance for rotational constraints. Default: 0.01.
+
+
+    Attributes
+    ----------
+
+    # ---- Path representation ----
+
+    images : list of ase.Atoms
+        Atomic structures at ``t_eval``.
+        The length of this list is ``len(t_eval)`` (including both endpoints).
+
+    coefs : ndarray of shape ``(nbasis, natoms, 3)``
+        Current B-spline coefficients defining the variational path.
+
+    angs : ndarray of shape ``(3,)``
+        Euler angles used when removing rotational redundancy.
+
+    # ---- Energies and forces ----
+
+    energies : ndarray of shape ``(len(t_eval),)``
+        Energies evaluated at ``t_eval``.
+
+    forces : ndarray of shape ``(len(t_eval), natoms, 3)``
+        Forces evaluated at ``t_eval``.
+
+    e0 : float
+        Minimum endpoint energy.
+
+    # ---- Evaluation grid ----
+
+    t_eval : ndarray
+        Energy evaluation points along the path.  
+
+    w_eval : ndarray of shape ``(len(t_eval),)``
+        Quadrature weights associated with ``t_eval``.
+
+    # ---- Constraint configuration ----
+
+    n_vel : int
+        Number of velocity constraints.
+
+    n_trans : int
+        Number of translational constraints.
+
+    n_rot : int
+        Number of rotational constraints.
+
+    eps_vel : float
+        Tolerance for velocity constraints.
+
+    eps_rot : float
+        Tolerance for rotational constraints.
+
+    remove_rotation_and_translation : bool
+        Whether translational/rotational redundancy is removed.
+
+    # ---- B-spline representation ----
+
+    nsegs : int
+        Number of B-spline segments.
+
+    dspl : int
+        Degree of the B-spline basis.
+
+    nbasis : int
+        Number of B-spline basis functions per Cartesian degree of freedom.  
+        ``nbasis = nsegs + dspl``.
+
+    # ---- Optimization ----
+
+    ipopt_options : dict
+        IPOPT options used for the optimization.
+
+    history : HistoryBase
+        Container storing iteration-by-iteration quantities.
+
     """
+
     def __init__(self,
         ref_images,
         coefs=None, nsegs=4,dspl=3,
@@ -73,24 +244,6 @@ class GeometricAction(ABC,cyipopt.Problem):
         n_vel=None,n_trans=None,n_rot=None,
         eps_vel=0.01,eps_rot=0.01,
         ):
-        """__init__ method of GeometricAction.
-
-        Args:
-            ref_images (list of ase.Atoms):
-            nsegs (int):
-            dspl (int):
-            remove_rotation_and_translation (bool):
-            mass_weighted (bool):
-            parallel (bool):
-            world (MPI world object):
-            t_eval (numpy.ndarray):
-            w_eval (numpy.ndarray):
-            n_vel (int):
-            n_trans (int):
-            n_rot (int):
-            eps_vel (float):
-            eps_rot (float):
-        """
 
         #Atoms
         self.natoms = len(ref_images[0])
@@ -226,7 +379,7 @@ class GeometricAction(ABC,cyipopt.Problem):
             'limited_memory_initialization':'constant',
             'limited_memory_init_val':2.5,
             'accept_every_trial_step':'yes',
-            'output_file':'dmf.out',
+            'output_file':'pathopt.out',
             }
 
         if self.parallel and self._world.size>1:
@@ -244,13 +397,39 @@ class GeometricAction(ABC,cyipopt.Problem):
             for nu in range(3)])
 
     def set_t_eval(self,t_eval):
-        """Setter of t_eval.
+        """
+        Set the energy evaluation points ``t_eval``.
+
+        This also updates the cached B-spline basis values used for evaluating
+        positions and derivatives.
+
+        Parameters
+        ----------
+        t_eval : ndarray
+            1D array of parameter values in the interval ``[0, 1]``.
+            Its length must match the length of the initial ``t_eval`` used
+            at initialization, because the number of images is fixed.
+
         """
         self.t_eval = t_eval
         self._P_eval = self._get_basis_values(self.t_eval)
 
-    def set_w_eval(self,w_eval=None):
-        """Setter of w_eval.
+    def set_w_eval(self, w_eval=None):
+        """
+        Set the quadrature weights ``w_eval`` used in the action integral.
+
+        If ``w_eval`` is not provided, trapezoidal weights are generated from
+        the current values of ``t_eval``.  The number of weights must
+        match the number of energy evaluation points, which is fixed after
+        initialization.
+
+        Parameters
+        ----------
+        w_eval : ndarray, optional
+            1D array of quadrature weights corresponding to ``t_eval``.
+            Its length must match that of ``t_eval``.  If omitted,
+            trapezoidal-rule weights are constructed automatically.
+
         """
         if w_eval is not None:
             self.w_eval = w_eval
@@ -307,18 +486,35 @@ class GeometricAction(ABC,cyipopt.Problem):
         return coefs
 
     def get_positions(self,t=None,P=None,nu=0):
-        """Get all positions of images at t or their derivatives.
+        """
+        Evaluate the positions (or their derivatives) along the path.
 
-        Args:
-            t (1D numpy.ndarray, optional): All positions of images at t or their derivatives are returned. If not present, t_eval is used. Default is None.
-            P (numpy.ndarray, optional): Return of _get_basis_values(t). See source code. Default is None. If both t and P are present, P is used in priority.
-            nu (int, optional): Degree of derivative with respect to t. nu must be 0, 1, or 2. Default is 0.
+        Normally, users provide only ``t``; however, advanced users may supply
+        precomputed basis values ``P`` (from ``_get_basis_values()``) to avoid
+        repeated evaluations.
 
-        Returns:
-            numpy.ndarray shape (nimages,natoms,3): Positions or their nu-th derivative at t.
+        If both ``t`` and ``P`` are provided, ``P`` takes priority.
+
+        Parameters
+        ----------
+        t : ndarray, optional
+            1D array of parameter values in ``[0, 1]`` at which positions (or
+            derivatives) are evaluated.  If omitted, ``t_eval`` is used.
+
+        P : ndarray, optional
+            Precomputed B-spline basis values from ``_get_basis_values()``.
+            Default: None.
+
+        nu : int, optional
+            Derivative order with respect to ``t`` (0, 1, or 2). Default: 0.
+
+        Returns
+        -------
+        ndarray
+            Array of shape ``(len(t), natoms, 3)`` containing the positions
+            (``nu = 0``) or the ``nu``-th derivatives of the path.
 
         """
-
         if t is None:
             t_temp = self.t_eval
         else:
@@ -330,8 +526,32 @@ class GeometricAction(ABC,cyipopt.Problem):
         return np.tensordot(P_temp[nu].T,self.coefs,1)
 
     def set_coefs_angs(self,coefs=None,angs=None):
-        """Setter of coefs and angs.
         """
+        Update the B-spline coefficients and/or rotation angles.
+
+        This method updates ``coefs`` and ``angs`` if the
+        corresponding arguments are provided.  After updating the angles,
+        the final B-spline control point (``coefs[-1]``) is recomputed as
+
+        .. math::
+
+            \mathrm{coefs}[-1] = \mathrm{coefs}_0[-1] \, R_x R_y R_z,
+
+        where ``R_x, R_y, R_z`` are the rotation matrices generated from
+        ``self.angs``.  This ensures that the endpoint geometry is kept
+        consistent under rotational constraints.
+
+        Parameters
+        ----------
+        coefs : ndarray of shape (nbasis, natoms, 3), optional
+            New B-spline coefficients.
+            If omitted, the current coefficients are preserved.
+
+        angs : ndarray of shape (3,), optional
+            Rotation angles used to the final endpoint alignment.
+            If omitted, the current angles are preserved.
+
+        """        
         if coefs is not None:
             self.coefs=coefs
         if angs is not None:
@@ -351,14 +571,31 @@ class GeometricAction(ABC,cyipopt.Problem):
             R[i,k,k]= np.cos(self.angs[i])
         return R
 
-    def set_positions(self,coefs=None,angs=None):
-        """Set positions of all images in self.images. These positions are determined by coefs and angs.
-
-        Args:
-            coefs (numpy.ndarray shape (nbasis,natoms,3), optional): If not present, self.coefs is used. Default is None.
-            angs (numpy.ndarray shape (3), optional): If not present, self.angs is used. Default is None.
+    def set_positions(self, coefs=None, angs=None):
         """
-        self.set_coefs_angs(coefs,angs)
+        Update the positions of all images along the path.
+
+        This method first updates the B-spline coefficients and/or rotation
+        angles by calling :meth:`set_coefs_angs`.  It then recomputes the
+        atomic positions along the path using :meth:`get_positions`, and
+        writes these positions into the existing ``self.images`` objects.
+
+        Note that this method does **not** change the number of images;
+        it only updates their positions according to the current path
+        parameters.
+
+        Parameters
+        ----------
+        coefs : ndarray of shape (nbasis, natoms, 3), optional
+            New B-spline coefficients.  If omitted, the existing coefficients
+            are preserved.
+
+        angs : ndarray of shape (3,), optional
+            Rotation angles used for endpoint alignment.  If omitted,
+            the existing angles are preserved.
+
+        """
+        self.set_coefs_angs(coefs, angs)
         pos = self.get_positions()
         for i in range(self.t_eval.size):
             self.images[i].set_positions(pos[i])
@@ -453,7 +690,7 @@ class GeometricAction(ABC,cyipopt.Problem):
     def _reshape_consts(self,consts):
         return np.hstack([np.ravel(c) for c in consts])
 
-    @lazyproperty
+    @cached_property
     def _f_ends(self):
         forces = np.empty((2, self.natoms, 3))
         if not self.parallel:
@@ -494,7 +731,7 @@ class GeometricAction(ABC,cyipopt.Problem):
 
         return forces
 
-    @lazyproperty
+    @cached_property
     def _e_ends(self):
         f=self._f_ends
         energies = np.empty(2)
@@ -516,15 +753,46 @@ class GeometricAction(ABC,cyipopt.Problem):
         return energies
 
 
-    @lazyproperty
+    @cached_property
     def e0(self):
+        """
+        float:
+            Minimum endpoint energy used to shift the energy scale.
+        """
         return np.amin(self._e_ends)
 
     def get_forces(self):
-        """Get forces of all images in self.images. After calling this method, forces and energies are stored in self.forces and self.energies, respectively.
+        """
+        Evaluate forces and energies for all images along the path.
 
-        Returns:
-            numpy.ndarray shape (nimages,natoms,3): Forces of all images in self.images.
+        For each image at ``t = t_eval[i]``, this method computes the atomic
+        forces and potential energy using the calculator attached to the
+        corresponding ``ase.Atoms`` object.  Forces and energies at the
+        endpoints are obtained from cached values (``_f_ends`` and ``_e_ends``)
+        with a small tolerance region near ``t = 0`` and ``t = 1``.  Interior
+        images are evaluated serially, using threads, or using MPI depending
+        on the settings of ``parallel`` and ``world``.
+
+        After calling this method, the arrays ``self.forces`` and
+        ``self.energies`` are updated in place.
+
+        Returns
+        -------
+        ndarray
+            Array of shape ``(len(t_eval), natoms, 3)`` containing the forces
+            for all images along the current path.
+
+        Notes
+        -----
+        - Endpoint forces are stored in ``_f_ends`` and are reused for
+          ``t < eps_t`` and ``t > 1 - eps_t``.
+
+        - If ``remove_rotation_and_translation`` is enabled, forces at the
+          final endpoint are rotated to match the aligned coordinate frame.
+
+        - When MPI is used, each rank evaluates a subset of interior images;
+          results are broadcast so that all ranks obtain full arrays.
+
         """
         eps_t=0.01
         eps_w=0.001
@@ -595,15 +863,104 @@ class GeometricAction(ABC,cyipopt.Problem):
 
     @abstractmethod
     def _get_objective(self):
+        """
+        Compute the objective value K(I).
+
+        This method returns the scalar objective value used by IPOPT.
+        Subclasses must implement a mapping
+
+            I  →  K(I),
+
+        where ``I`` is the action computed internally from the path
+        (via ``_get_action``).
+
+        Returns
+        -------
+        float
+            The value of the objective K(I).
+
+        Examples
+        --------
+        In ``DirectMaxFlux``, the objective is
+
+            K(I) = log(I) / beta
+
+        implemented as:
+
+        .. code-block:: python
+
+            def _get_objective(self):
+                return np.log(self._get_action()) / self.beta
+
+        """
         pass
 
     @abstractmethod
     def _get_grad_objective(self):
+        """
+        Compute the derivative of K(I) with respect to ``coefs``.
+
+        Returns
+        -------
+        ndarray
+            The derivative of the objective with respect to the B-spline
+            coefficients (and rotation angles, if applicable).  The shape
+            matches that of the flattened optimization variable vector.
+
+        Examples
+        --------
+        In ``DirectMaxFlux``, where
+
+            K(I) = log(I) / beta,
+
+        the derivative is implemented as:
+
+        .. code-block:: python
+
+            def _get_grad_objective(self):
+                return self._get_grad_action() / self._get_action() / self.beta
+
+        """
         pass
 
     @abstractmethod
-    def _get_func_en(self,en):
+    def _get_func_en(self, en):
+        """
+        Evaluate the energy-dependent function F(E) and its derivative dF/dE.
+
+        This function defines the integrand weights used in the action
+
+            I = ∫ |ẋ(t)| F(E(t)) dt.
+
+        Parameters
+        ----------
+        en : ndarray
+            Array of energy values E(t_i) at the quadrature points.
+
+        Returns
+        -------
+        F_en : ndarray
+            The array F(E(t_i)).
+
+        dF_en : ndarray
+            The array dF/dE evaluated at the same points.
+
+        Examples
+        --------
+        In ``DirectMaxFlux``, the choice is
+
+            F(E) = exp(beta * E),    dF/dE = beta * exp(beta * E)
+
+        implemented as:
+
+        .. code-block:: python
+
+            def _get_func_en(self, en):
+                return np.exp(self.beta * en), self.beta * np.exp(self.beta * en)
+
+        """
         pass
+
 
     def _get_norm_vels(self,nu=0):
         pos = self.get_positions(P=self._P_vel)
@@ -668,24 +1025,79 @@ class GeometricAction(ABC,cyipopt.Problem):
                 self.forces,1)
 
         return grad_action
+    
 
     def interpolate_energies(
-        self,t_eval=None,energies=None,forces=None,coefs=None,
+        self, t_eval=None, energies=None, forces=None, coefs=None,
         delta_e=None):
-        """Interpolate the enegy along the path. See Ref. 1 for details.
+        r"""
+        Construct a piecewise-cubic interpolation of the energy along the path.
 
-        Args:
-            t_eval (numpy.ndarray shape (\:), optional): Points where energies and forces were evaluated. If not present, self.t_eval is used. Default is None.
-            energies (numpy.ndarray shape (len(t_eval)), optional): Energies evaluated at t_eval. If not present, self.energies is used. Default is None.
-            forces (numpy.ndarray shape (len(t_eval),natoms,3), optional): Forces evaluated at t_eval. If not present, self.forces is used. Default is None.
-            coefs (numpy.ndarray shape (nbasis,natoms,3), optional): Coefficients of B-spline functions. If not present, self.coefs is used. Default is None.
-            delta_e (list of float, optional): If present, return points that satisfy :math:`\\tilde{E}(t) = E_{\\max} - \\text{delta_e}`.
+        This method reconstructs a smooth interpolation
+        :math:`\tilde{E}(t)` of the discrete energy values evaluated at
+        ``t_eval``.  The interpolation is ``C^1``-continuous and uses both
+        energies and their first derivatives.
 
-        Returns:
-            polys (numpy.ndarray shape (len(t_eval)-1,4)): Coefficients of piecewise cubic polynomial.
-            t_max (float): Maximum point of :math:`\\tilde{E}(t)`.
-            e_max (float): Maximum value of :math:`\\tilde{E}(t)`.
-            t_de (list of float): Points that satisfy :math:`\\tilde{E}(t) = E_{\\max} - \\text{delta_e}`.
+        Optionally, the method can also locate the values of ``t`` satisfying
+
+        .. math::
+
+            \tilde{E}(t) = E_{\max} - \Delta E,
+
+        for user-specified ``delta_e``.
+
+        See Ref. 1 for details.
+
+        Parameters
+        ----------
+        t_eval : ndarray, optional
+            1D array of parameter values at which energies/forces were evaluated.
+            If omitted, ``self.t_eval`` is used.  Only the region
+            ``t_eval <= 1`` is used internally.
+
+        energies : ndarray, optional
+            Energy values at ``t_eval``.  If omitted, ``self.energies`` is used.
+
+        forces : ndarray, optional
+            Forces at ``t_eval`` with shape ``(len(t_eval), natoms, 3)``.
+            If omitted, ``self.forces`` is used.
+
+        coefs : ndarray of shape ``(nbasis, natoms, 3)``, optional
+            B-spline control-point coefficients.
+            If omitted, ``self.coefs`` is used.
+
+        delta_e : list of float, optional
+            Energy offsets :math:`\Delta E`.  If provided,
+            this method also returns the corresponding parameter values ``t``
+            satisfying
+
+            .. math::
+
+                \tilde{E}(t) = E_{\max} - \Delta E.
+
+        Returns
+        -------
+        polys : ndarray of shape ``(len(t_eval) - 1, 4)``
+            Polynomial coefficients defining the piecewise cubic interpolation.
+            Each segment corresponds to:
+
+            .. math::
+
+                \tilde{E}(t)
+                = c_0 + c_1 t + c_2 t^2 + c_3 t^3.
+
+        t_max : float
+            The parameter value ``t`` at which the interpolated energy
+            :math:`\tilde{E}(t)` attains its maximum.
+
+        e_max : float
+            The maximum interpolated energy :math:`\tilde{E}(t_{\max})`.
+
+        t_de : list of ndarray, optional
+            Returned only when ``delta_e`` is provided.
+            ``t_de[j]`` contains all roots satisfying
+            :math:`\tilde{E}(t) = E_{\max} - \Delta E_j`.
+
         """
 
         if t_eval is None:
@@ -759,11 +1171,36 @@ class GeometricAction(ABC,cyipopt.Problem):
 
         return polys,t_max,e_max
 
-    def solve(self,tol='tight'):
-        """Solve the variational problem.
+    def solve(self, tol='tight'):
+        """
+        Solve the variational optimization problem using IPOPT.
 
-        Args:
-            tol (float or str, optional): Change IOPOT option dual_inf_tol. If tol is float, dual_inf_tol is set to tol. If tol is either 'tight', 'middle', or 'loose' (keywords used in Ref. 1), dual_inf_tol is set to 0.04, 0.1, or 0.2, respectively. Default is 'tight'.
+        The current path parameters are flattened into a 1D variable vector
+        ``x`` and passed to IPOPT.  After optimization, the updated vector is
+        written back via ``set_x``.  The return values are those provided by
+        ``cyipopt.Problem.solve``.
+
+        The argument ``tol`` provides a convenient shortcut for adjusting the
+        IPOPT option ``dual_inf_tol`` using the presets from Ref. 1:
+
+        - ``'tight'``  →  ``dual_inf_tol = 0.04``  
+        - ``'middle'`` →  ``dual_inf_tol = 0.10``  
+        - ``'loose'``  →  ``dual_inf_tol = 0.20``  
+        - a float value directly sets ``dual_inf_tol`` to that number.
+
+        Parameters
+        ----------
+        tol : {'tight', 'middle', 'loose'} or float, optional
+            Desired dual infeasibility tolerance.  Default is ``'tight'``.
+
+        Returns
+        -------
+        x_opt : ndarray
+            Optimized 1D variable array.
+
+        info : dict
+            IPOPT information dictionary.
+
         """
 
         if tol:
@@ -783,73 +1220,118 @@ class GeometricAction(ABC,cyipopt.Problem):
         return x,info
 
 
-    def add_ipopt_options(self,dict_options):
-        """Method for adding ipopt options.
+    def add_ipopt_options(self, dict_options):
+        """
+        Add or update IPOPT options.
+
+        This method updates ``self.ipopt_options`` with the key–value pairs
+        given in ``dict_options`` and forwards them to IPOPT via
+        ``self.add_option``.
+
+        Parameters
+        ----------
+        dict_options : dict
+            Dictionary of IPOPT options (e.g., ``{"tol": 1e-3}``).
+
         """
         self.ipopt_options.update(dict_options)
         for item in self.ipopt_options.items():
             self.add_option(*item)
 
-    def get_x(self):
-        """Get variables of the variational problem in a 1D array.
 
-        Returns:
-            x (1D numpy.ndarray): self.coefs[1:-1].flatten(). If remove_rotation_and_translation is True, self.angs is appended.
+    def get_x(self):
+        """
+        Return the flattened optimization variable vector used by IPOPT.
+
+        Although mainly intended for internal use, this method is exposed
+        because :meth:`solve` returns the optimized variable vector ``x``.
+        The returned array contains all internal degrees of freedom:
+
+        - the flattened interior B-spline coefficients ``coefs[1:-1]``  
+          (endpoint coefficients are fixed), and
+        - the rotation angles ``angs`` if
+          ``remove_rotation_and_translation=True``.
+
+        Returns
+        -------
+        x : ndarray of shape (nvar,)
+            Flattened optimization variable vector.
+
         """
         x = self.coefs[1:-1].flatten()
         if self.remove_rotation_and_translation:
-            x = np.hstack([x,self.angs])
-        return x/self.var_scales
+            x = np.hstack([x, self.angs])
+        return x
+    
 
-    def set_x(self,x):
-        """Set self.coefs and self.angs from x.
-
-        Args:
-            x (1D numpy.ndarray): Variables of the variational problem in a 1D array.
+    def set_x(self, x):
         """
-        nc = (self.nbasis-2)*3*self.natoms
+        Update ``coefs`` and ``angs`` from the flattened optimization vector.
+
+        This method is normally not called directly by end-users; it is invoked
+        internally during IPOPT callbacks such as :meth:`objective`,
+        :meth:`gradient`, :meth:`constraints`, and :meth:`jacobian`.
+
+        The input vector ``x`` must be exactly the one produced by
+        :meth:`get_x`.  The method reconstructs:
+
+        - ``coefs[1:-1]`` (interior B-spline control points), and
+        - ``angs`` (rotation angles, if enabled),
+
+        and then updates all image positions via :meth:`set_positions`.
+
+        Parameters
+        ----------
+        x : ndarray of shape (nvar,)
+            Flattened optimization variable vector.
+
+        """
+        nc = (self.nbasis - 2) * 3 * self.natoms
         coefs = self._coefs0.copy()
-        y = x*self.var_scales
-        coefs[1:-1] = y[:nc].reshape((-1,self.natoms,3))
+
+        coefs[1:-1] = x[:nc].reshape((-1, self.natoms, 3))
+
         angs = np.zeros(3)
         if self.remove_rotation_and_translation:
-            angs = y[-3:]
+            angs = x[-3:]
 
-        self.set_positions(coefs,angs)
+        self.set_positions(coefs, angs)
+
 
     def objective(self, x):
-        """Objective function.
+        """
+        IPOPT callback: objective function.
 
-        Args:
-            x (1D numpy.ndarray): Variables of the variational problem in a 1D array.
-
-        Returns:
-            float: Objective function.
+        This method is not intended to be called directly by users.
+        It is invoked internally by IPOPT during the optimization process.
+        The argument ``x`` is the flattened optimization variable vector,
+        and the return value is the scalar objective evaluated at that state.
         """
         self.set_x(x)
         return self._get_objective()
 
-    def gradient(self,x):
-        """Gradient of the objective function.
+    def gradient(self, x):
+        """
+        IPOPT callback: gradient of the objective.
 
-        Args:
-            x (1D numpy.ndarray): Variables of the variational problem in a 1D array.
-
-        Returns:
-            numpy.ndarray shape (len(x)): Gradient of the objective function.
+        This method is not intended to be called directly by users.
+        It is invoked internally by IPOPT during the optimization process.
+        The argument ``x`` is the flattened optimization variable vector,
+        and the return value is the gradient of the objective with respect to ``x``.
         """
         self.set_x(x)
         grad = self._reshape_jacs(
             [self._get_grad_objective()])
         return grad*self.var_scales
 
-    def constraints(self,x):
-        """Constraints.
-        Args:
-            x (1D numpy.ndarray): Variables of the variational problem in a 1D array.
+    def constraints(self, x):
+        """
+        IPOPT callback: nonlinear constraint values.
 
-        Returns:
-            numpy.ndarray shape (# of constraints): Constraints.
+        This method is not intended to be called directly by users.
+        It is invoked internally by IPOPT during the optimization process.
+        The argument ``x`` is the flattened optimization variable vector,
+        and the return value is the array of constraint values at that state.
         """
         self.set_x(x)
         c_list = [self._get_consts_vel()]
@@ -858,13 +1340,14 @@ class GeometricAction(ABC,cyipopt.Problem):
             c_list.append(self._get_consts_rot())
         return self._reshape_consts(c_list)
 
-    def jacobian(self,x):
-        """Jacobian of the constraints.
-        Args:
-            x (1D numpy.ndarray): Variables of the variational problem in a 1D array.
+    def jacobian(self, x):
+        """
+        IPOPT callback: Jacobian of the constraints.
 
-        Returns:
-            numpy.ndarray shape (# of constraints,len(x)): Jacobian of the constraints.
+        This method is not intended to be called directly by users.
+        It is invoked internally by IPOPT during the optimization process.
+        The argument ``x`` is the flattened optimization variable vector,
+        and the return value is the Jacobian matrix of the constraint functions.
         """
         self.set_x(x)
         j_list = [self._get_jac_vel()]
@@ -874,9 +1357,27 @@ class GeometricAction(ABC,cyipopt.Problem):
         return self._reshape_jacs(j_list)*self.var_scales
 
     def intermediate(self, alg_mod, iter_count, obj_value,
-                     inf_pr, inf_du, mu, d_norm, regularization_size,
-                     alpha_du, alpha_pr, ls_trials):
-        """Method called at the end of each iteration.
+                    inf_pr, inf_du, mu, d_norm, regularization_size,
+                    alpha_du, alpha_pr, ls_trials):
+        """
+        IPOPT callback: per-iteration monitor.
+
+        This method is not intended to be called directly by users.
+        It is invoked internally by IPOPT at the end of each iteration.
+        The arguments are provided by IPOPT and follow its callback
+        interface specification.
+
+        In addition to the default IPOPT behavior, this method records
+        iteration-by-iteration quantities into ``self.history``.
+        See :class:`HistoryBase` for details.
+
+        Parameters
+        ----------
+        alg_mod, iter_count, obj_value, inf_pr, inf_du, mu, d_norm, regularization_size, alpha_du, alpha_pr, ls_trials :
+            Values supplied directly by IPOPT at each iteration.
+            These are passed through unchanged and are not meant
+            to be modified by the user.
+
         """
 
         self.history.forces.append(self.forces)
@@ -896,27 +1397,27 @@ class GeometricAction(ABC,cyipopt.Problem):
         self.history.images_tmax.append(image_tmax)
 
 
-@dataclass
-class HistoryDMF:
+class HistoryDMF():
     """
-    Container storing the optimization history of the DirectMaxFlux method.
+    Container storing the optimization history of the ``DirectMaxFlux`` method.
 
-    This object collects various physical and numerical quantities evaluated along the reaction path during the DirectMaxFlux optimization. Each attribute stores the values accumulated at successive iterations.
+    This object collects various physical and numerical quantities evaluated
+    along the reaction path during the optimization.  At each IPOPT iteration,
+    the ``DirectMaxFlux.intermediate`` method appends the current values of
+    these quantities to the corresponding lists below.
 
     Attributes
     ----------
-    forces : list of numpy.ndarray, shape (nmove+2, natoms, 3)
-        History of the forces (negative gradients) acting on all atoms
-        along the path at each iteration.
-    energies : list of numpy.ndarray, shape (nmove+2,)
-        History of the potential energies of all images along the path.
-    coefs : list of numpy.ndarray, shape (nbasis, natoms, 3)
-        History of the basis coefficients defining the variational path.
-    angs : list of numpy.ndarray, shape (3,)
-        History of the rotation angles used for path alignment.
-    t_eval : list of numpy.ndarray, shape (nmove+2,)
-        History of the parameterized coordinate values ``t`` associated
-        with each image along the path.
+    forces : list of ndarray
+        History of ``DirectMaxFlux.forces``.
+    energies : list of ndarray
+        History of ``DirectMaxFlux.energies``.
+    coefs : list of ndarray
+        History of ``DirectMaxFlux.coefs``.
+    angs : list of ndarray
+        History of ``DirectMaxFlux.angs``.
+    t_eval : list of ndarray
+        History of ``DirectMaxFlux.t_eval``.
     tmax : list of float
         History of the location ``t_max`` corresponding to the maximum
         interpolated energy along the path. See Ref. 1 for details.
@@ -925,139 +1426,240 @@ class HistoryDMF:
         approximate transition-state geometry at each iteration.
     duals : list of float
         History of the scaled dual infeasibility (IPOPT diagnostic).
+
     """
 
-    forces: List[np.ndarray] = field(default_factory=list)
-    energies: List[np.ndarray] = field(default_factory=list)
-    coefs: List[np.ndarray] = field(default_factory=list)
-    angs: List[np.ndarray] = field(default_factory=list)
-    t_eval: List[np.ndarray] = field(default_factory=list)
-    tmax: List[float] = field(default_factory=list)
-    images_tmax: List[Atoms] = field(default_factory=list)
-    duals: List[float] = field(default_factory=list)
+    def __init__(self):
+        self.forces = []
+        self.energies = []
+        self.coefs = []
+        self.angs = []
+        self.t_eval = []
+        self.tmax = []
+        self.images_tmax = []
+        self.duals = []
 
 
-#class HistoryDMF():
-#    """Object storing histories of properties listed below.
-#
-#    Attributes:
-#        forces (list of numpy.ndarray shape (nmove+2,natoms,3)):
-#        energies (list of numpy.ndarray shape (nmove+2)):
-#        coefs (list of numpy.ndarray shape (nbasis,natoms,3)):
-#        angs (list of numpy.ndarray shape (3)):
-#        t_eval (list of numpy.ndarray shape (nmove+2)):
-#        tmax (list of float):
-#            History of tmax. tmax is the highest energy point of the interpoated energy along the path. See Ref. 1 for details.
-#        images_tmax (list of ase.Atoms):
-#            History of the image at t=tmax, an approximation of TS.
-#        duals (list of float):
-#            History of the scaled dual infeasibility.
-#    """
-#    def __init__(self):
-#        self.forces=[]
-#        self.energies=[]
-#        self.coefs=[]
-#        self.angs=[]
-#        self.tmax=[]
-#        self.images_tmax=[]
-#        self.duals=[]
-#        self.t_eval=[]
+class DirectMaxFlux(VariationalPathOpt):
+    r"""
+    Variational reaction path/transition states optimization based on
+    the **direct MaxFlux method**.
+
+    Ref. 1.
+       S.-i. Koda and S. Saito,
+       *Locating Transition States by Variational Reaction Path Optimization
+       with an Energy-Derivative-Free Objective Function*
+       J. Chem. Theory Comput. **20**, 2798–2811 (2024).
+
+    This class implements the MaxFlux variational principle in the large-β
+    (low-temperature) regime for locating transition states (TSs) and
+    approximating minimum-energy paths (MEPs), following the formulation of
+    Ref. 1.
+
+    The reaction path \( x(t) \) is represented by a B-spline expansion, and
+    the following functional is minimized:
+
+    .. math::
+
+        \tilde{I}[x] = \beta^{-1} \log I[x],
+
+    where
+
+    .. math::
+
+        I[x] = \int_0^1 dt\, \vert \dot{x}(t) \vert \, e^{\beta E(x(t))}.
+
+    With large \( \beta \), the highest-energy point along the optimized
+    path approximates the TS geometry.  
+
+    The method requires only first-order atomic forces, because the objective
+    contains no derivatives of the potential energy.
+
+    Additional features include:
+    - construction of initial B-spline coefficients from ``ref_images``
+    - optional removal of translational and rotational redundancy
+    - parallel energy/force evaluation (threads or MPI)
+    - optional adaptive refinement of ``t_eval`` near the high-energy region
 
 
-class DirectMaxFlux(GeometricAction):
-    """Class for the direct MaxFlux method.
+    Parameters
+    ----------
 
-    This class defines the variational problem of the direct MaxFlux method.
+    ref_images : list of ase.Atoms
+        List of atomic structures representing an initial guess for the path.
+        If ``coefs`` is **not** provided, a piecewise linear interpolation
+        through ``ref_images`` is constructed, and B-spline coefficients are
+        obtained by fitting this interpolated path.  
+        If ``coefs`` **is** provided, no interpolation is performed:
+        ``ref_images[0]`` is used only to extract atomic numbers, masses,
+        cell, and PBC settings.
 
-    Args:
-        ref_images (list of ase.Atoms):
-            Reference images for generating an initial path. If coefs is not present, coefs of the initial path is generated by a linear interpolation with ref_images. If coefs is present, only ref_images[0] and ref_images[-1] are used as the endpoints of the path.
-        coefs (numpy.ndarray shape (nbasis,natoms,3),optional):
-            Coefficients of basis functions. If coefs is present, the interpolation with ref_images is skipped, and coefs is stored as it is. Default is None.
-        nsegs (int,optional):
-            Determines the number of B-spline functions. See Ref. 1 for details. Default is 4.
-        dspl (int,optional):
-            Degree of B-spline functions. Default is 3.
-        remove_rotation_and_translation (bool,optional):
-            Remove redundancy regarding rotaional and translational symmetry. Default is True.
-        mass_weighted (bool,optional):
-            Use mass-weighted coordinates. False is recommended for a rapid convergence. Default is False.
-        parallel (bool,optional):
-            Calculate forces of images in parallel. Both Threading and MPI are supported. Default is False. Usage is basically the same as the NEB method in ASE. See `ASE's document <https://wiki.fysik.dtu.dk/ase/ase/neb.html#parallelization-over-images>`_.
-        world (MPI world object,optional):
-            If not present, ase.parallel.world is used. Default is None.
-        t_eval (numpy.ndarray shape (nmove+2),optional):
-            Initial energy evaluation points. If not present or update_teval is True, an equally distributed t_eval is used. Default is None.
-        w_eval (numpy.ndarray shape (nmove+2),optional):
-            Weights of the numerical integuration of the objective function. If not present, w_eval is determined by the trapezoidal formula. Default is None.
-        n_vel (int,optional):
-            Determines the number of velocity constraints. See Ref. 1 for details. If not present, n_vel is 4*nsegs. Default is None.
-        n_trans (int,optional):
-            Determines the number of translational constraints. See Ref. 1 for details. If not present, n_trans is 2*nsegs. Default is None.
-        n_rot (int,optional):
-            Determines the number of rotational constraints. See Ref. 1 for details. If not present, n_rot is 2*nsegs. Default is None.
-        eps_vel (float,optional):
-            Parameter for loosening velocity constraints. See Ref. 1 for details. Default is 0.01.
-        eps_rot (float,optional):
-            Parameter for loosening rotational constraints. See Ref. 1 for details. Default is 0.01.
-        beta (float,optional):
-            Reciprocal temperature of the direct MaxFlux method. Default is 10 [/eV].
-        nmove (int,optional):
-            The number of movable energy evaluation points (images). Default is 5.
-        update_teval (bool,optional):
-            Update t_eval at each iteration. Default is False.
-        params_t_update (dict,optional):
-            Parameters for t_eval updating. See Ref. 1 for details.
+    coefs : ndarray of shape ``(nbasis, natoms, 3)``, optional
+        Initial B-spline coefficients. If provided, interpolation from
+        ``ref_images`` is skipped and these coefficients define the initial
+        path. Default: None.
 
-    Attributes:
-        images (list of ase.Atoms):
-            nmove+2 images at t_eval.
-        coefs (numpy.ndarray shape (nbasis,natoms,3)):
-            Coefficients of B-spline functions.
-        angs (numpy.ndarray shape (3)):
-            Euler angles of images[-1], which is used when remove_rotation_and_translation is True.
-        energies (numpy.ndarray shape (nmove+2)):
-            Energies of all images, which are shifted by e0, are stored after calling get_forces().
-        e0 (float):
-            min(E(images[0]),E(images[-1]))
-        forces (numpy.ndarray shape (nmove+2,natoms,3)):
-            Forces of each image are stored after calling get_forces().
-        history (History object):
-            Object that stores histories of some properties. See History object below.
-        natoms (int):
-            The number of atoms in the system.
-        nbasis (int):
-            The number of the B-spline functions. nbasis = nsegs + dspl.
-        ipopt_options (dict):
-            Non-default options of IPOPT. On initialization, {'tol'\:1.0, 'dual_inf_tol'\:0.04, 'constr_viol_tol'\:0.01, 'compl_inf_tol'\:0.01, 'nlp_scaling_method'\:'user-scaling', 'obj_scaling_factor'\:0.1, 'limited_memory_initialization'\:'constant', 'limited_memory_init_val'\:2.5, 'accept_every_trial_step'\:'yes', 'output_file'\:'dmf.out',} is set.
-        remove_rotation_and_translation (bool):
-            Same as the above parameter.
-        nsegs (int):
-            Same as the above parameter.
-        dspl (int):
-            Same as the above parameter.
-        t_eval (numpy.ndarray):
-            Same as the above parameter.
-        w_eval (numpy.ndarray):
-            Same as the above parameter.
-        n_vel (int):
-            Same as the above parameter.
-        n_trans (int):
-            Same as the above parameter.
-        n_rot (int):
-            Same as the above parameter.
-        eps_vel (float):
-            Same as the above parameter.
-        eps_rot (float):
-            Same as the above parameter.
-        beta (float):
-            Same as the above parameter.
-        nmove (int):
-            Same as the above parameter.
-        update_teval (bool):
-            Same as the above parameter.
-        params_t_update (dict):
-            Same as the above parameter.
+    nsegs : int, optional
+        Number of B-spline segments. The number of basis functions per
+        Cartesian degree of freedom is ``nbasis = nsegs + dspl``.
+        See Ref. 1 for details. Default: 4.
+
+    dspl : int, optional
+        Polynomial degree of the B-spline basis. Default: 3.
+
+    remove_rotation_and_translation : bool, optional
+        If True, remove global translational and rotational motion using
+        nonlinear constraints. Default: True.
+
+    mass_weighted : bool, optional
+        If True, the velocity norm \( \vert \dot{x}(t) \vert \) uses mass-weighted
+        coordinates. Default: False.
+
+    parallel : bool, optional
+        Evaluate energies and forces in parallel using threads or MPI.
+        Default: False.
+
+    world : MPI communicator, optional
+        Communicator used when ``parallel=True``. Defaults to
+        ``ase.parallel.world``.
+
+    t_eval : ndarray of shape ``(nmove+2,)``, optional
+        **Initial** evaluation points in \( t \in [0,1] \).  
+        If omitted or ``update_teval`` is True, an even distribution
+        np.linspace(0.0,1.0,nmove+2) is generated.
+
+    w_eval : ndarray of shape ``(nmove+2,)``, optional
+        **Initial** quadrature weights for evaluating the integral
+
+        .. math::
+
+            I[x] \approx \sum_i w_i\, \vert \dot{x}(t) \vert \, e^{\beta E(x(t_i))}.
+
+        If omitted, trapezoidal weights are used.
+
+    n_vel : int, optional
+        Number of discretized velocity constraints.
+        Default: ``4 * nsegs``.
+
+    n_trans : int, optional
+        Number of translational constraints.
+        Default: ``2 * nsegs``.
+
+    n_rot : int, optional
+        Number of rotational constraints.
+        Default: ``2 * nsegs``.
+
+    eps_vel : float, optional
+        Tolerance for velocity constraints. Default: 0.01.
+
+    eps_rot : float, optional
+        Tolerance for rotational constraints. Default: 0.01.
+
+    beta : float, optional
+        Reciprocal temperature \( \beta \) (in 1/eV) used in the MaxFlux
+        functional. Default: 10.0.
+
+    nmove : int, optional
+        Number of **movable** interior evaluation points.  
+        Total number of images = ``nmove + 2`` (including both endpoints).
+        Default: 5.
+
+    update_teval : bool, optional
+        If True, ``t_eval`` is adaptively updated toward the high-energy region
+        during optimization. Default: False.
+
+    params_t_update : dict, optional
+        Parameters controlling the update of ``t_eval``.
+        Includes keys such as ``max_alpha0``, ``de``, ``dia``, ``mua``,
+        ``dib``, ``mub``, ``epsb`` (Defaults are the same as in Ref. 1).
+
+
+    Attributes
+    ----------
+
+    # ---- Path representation ----
+
+    images : list of ase.Atoms
+        Atomic structures at the **current** ``t_eval``.
+        The length of this list is ``nmove + 2`` (including both endpoints).
+
+    coefs : ndarray of shape ``(nbasis, natoms, 3)``
+        Current B-spline coefficients defining the variational path.
+
+    angs : ndarray of shape ``(3,)``
+        Euler angles used when removing rotational redundancy.
+
+    # ---- Energies and forces ----
+
+    energies : ndarray of shape ``(nmove+2,)``
+        Energies evaluated at the **current** ``t_eval`` (shifted by ``e0``).
+
+    forces : ndarray of shape ``(nmove+2, natoms, 3)``
+        Forces evaluated at the **current** ``t_eval``.
+
+    # ---- Evaluation grid ----
+
+    t_eval : ndarray of shape ``(nmove+2,)``
+        **Current** energy evaluation points along the path.  
+        If ``update_teval=True``, these differ from the initial values.
+
+    w_eval : ndarray of shape ``(nmove+2,)``
+        **Current** quadrature weights associated with ``t_eval``.
+
+    # ---- Constraint configuration ----
+
+    n_vel : int
+        Number of velocity constraints.
+
+    n_trans : int
+        Number of translational constraints.
+
+    n_rot : int
+        Number of rotational constraints.
+
+    eps_vel : float
+        Tolerance for velocity constraints.
+
+    eps_rot : float
+        Tolerance for rotational constraints.
+
+    remove_rotation_and_translation : bool
+        Whether translational/rotational redundancy is removed.
+
+    # ---- B-spline representation ----
+
+    nsegs : int
+        Number of B-spline segments.
+
+    dspl : int
+        Degree of the B-spline basis.
+
+    nbasis : int
+        Number of B-spline basis functions per Cartesian degree of freedom.  
+        ``nbasis = nsegs + dspl``.
+
+    # ---- MaxFlux functional parameters ----
+
+    beta : float
+        Reciprocal temperature \( \beta \).
+
+    nmove : int
+        Number of movable interior evaluation points.
+
+    update_teval : bool
+        Whether ``t_eval`` is adaptively updated.
+
+    params_t_update : dict
+        Parameters controlling the update of ``t_eval``.
+
+    # ---- Optimization ----
+
+    ipopt_options : dict
+        IPOPT options used for the optimization.
+
+    history : HistoryDMF
+        Container storing iteration-by-iteration quantities.
+
     """
 
     def __init__(
@@ -1078,29 +1680,7 @@ class DirectMaxFlux(GeometricAction):
             'dia':1.0,'mua':5.0,
             'dib':0.2,'mub':5.0,'epsb':0.02,},
         ):
-        """__init__ method of DirectMaxFlux.
 
-        Args:
-            ref_images (list of ase.Atoms):
-            coefs (numpy.ndarray,optional):
-            nsegs (int,optional):
-            dspl (int,optional):
-            remove_rotation_and_translation (bool,optional):
-            mass_weighted (bool,optional):
-            parallel (bool,optional):
-            world (MPI world object,optional):
-            t_eval (numpy.ndarray,optional):
-            w_eval (numpy.ndarray,optional):
-            n_vel (int,optional):
-            n_trans (int,optional):
-            n_rot (int,optional):
-            eps_vel (float,optional):
-            eps_rot (float,optional):
-            beta (float,optional):
-            nmove (int,optional):
-            update_teval (bool,optional):
-            params_t_update (dict,optional):
-        """
         args = locals()
         base_params = [
             'ref_images','coefs','nsegs','dspl',
@@ -1141,7 +1721,29 @@ class DirectMaxFlux(GeometricAction):
     def intermediate(self, alg_mod, iter_count, obj_value,
                      inf_pr, inf_du, mu, d_norm, regularization_size,
                      alpha_du, alpha_pr, ls_trials):
-        """Method called at the end of each iteration. Updating of t_eval is defined in this method.
+        """
+        IPOPT callback: per-iteration monitor.
+
+        This method is not intended to be called directly by users.
+        It is invoked internally by IPOPT at the end of each iteration.
+        The arguments are provided by IPOPT and follow its callback
+        interface specification.
+
+        In addition to the default IPOPT behavior, this method records
+        iteration-by-iteration quantities into ``self.history``.
+        See :class:`HistoryDMF` for details.
+
+        If ``update_teval=True``, this method also adaptively updates
+        the energy evaluation points ``t_eval`` based on the current
+        energy profile and dual infeasibility.  See Ref. 1 for details.
+        
+        Parameters
+        ----------
+        alg_mod, iter_count, obj_value, inf_pr, inf_du, mu, d_norm, regularization_size, alpha_du, alpha_pr, ls_trials :
+            Values supplied directly by IPOPT at each iteration.
+            These are passed through unchanged and are not meant
+            to be modified by the user.
+
         """
 
         super().intermediate(alg_mod, iter_count, obj_value,
@@ -1192,7 +1794,3 @@ class DirectMaxFlux(GeometricAction):
             self.set_w_eval()
 
             self._max_alpha *= cb
-
-
-
-
