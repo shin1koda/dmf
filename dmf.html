@@ -1,0 +1,1112 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DirectMaxFlux &mdash; dmf 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=8d563738"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="FB-ENM Calculators" href="fbenm.html" />
+    <link rel="prev" title="dmf: Direct MaxFlux and FB-ENM utilities" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            dmf
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">DirectMaxFlux</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.images"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.images</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.coefs"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.coefs</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.angs"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.angs</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.energies"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.energies</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.forces"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.forces</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.t_eval"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.t_eval</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.w_eval"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.w_eval</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.n_vel"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.n_vel</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.n_trans"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.n_trans</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.n_rot"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.n_rot</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.eps_vel"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.eps_vel</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.eps_rot"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.eps_rot</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.remove_rotation_and_translation"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.remove_rotation_and_translation</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.nsegs"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.nsegs</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.dspl"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.dspl</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.nbasis"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.nbasis</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.beta"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.beta</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.nmove"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.nmove</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.update_teval"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.update_teval</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.params_t_update"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.params_t_update</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.ipopt_options"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.ipopt_options</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.history"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.history</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.add_ipopt_options"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.add_ipopt_options()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.add_option"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.add_option()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.close"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.close()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.constraints"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.constraints()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.e0"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.e0</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.get_current_iterate"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.get_current_iterate()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.get_current_violations"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.get_current_violations()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.get_positions"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.get_positions()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.get_x"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.get_x()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.gradient"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.gradient()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.interpolate_energies"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.interpolate_energies()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.jacobian"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.jacobian()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.objective"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.objective()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.set_coefs_angs"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.set_coefs_angs()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.set_positions"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.set_positions()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.set_problem_scaling"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.set_problem_scaling()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.set_t_eval"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.set_t_eval()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.set_w_eval"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.set_w_eval()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.set_x"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.set_x()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.solve"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.solve()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.get_forces"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.get_forces()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.DirectMaxFlux.intermediate"><code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.intermediate()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#historydmf">HistoryDMF</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#dmf.dmf.HistoryDMF"><code class="docutils literal notranslate"><span class="pre">HistoryDMF</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#dmf.dmf.HistoryDMF.forces"><code class="docutils literal notranslate"><span class="pre">HistoryDMF.forces</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#dmf.dmf.HistoryDMF.energies"><code class="docutils literal notranslate"><span class="pre">HistoryDMF.energies</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#dmf.dmf.HistoryDMF.coefs"><code class="docutils literal notranslate"><span class="pre">HistoryDMF.coefs</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#dmf.dmf.HistoryDMF.angs"><code class="docutils literal notranslate"><span class="pre">HistoryDMF.angs</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#dmf.dmf.HistoryDMF.t_eval"><code class="docutils literal notranslate"><span class="pre">HistoryDMF.t_eval</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#dmf.dmf.HistoryDMF.tmax"><code class="docutils literal notranslate"><span class="pre">HistoryDMF.tmax</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#dmf.dmf.HistoryDMF.images_tmax"><code class="docutils literal notranslate"><span class="pre">HistoryDMF.images_tmax</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#dmf.dmf.HistoryDMF.duals"><code class="docutils literal notranslate"><span class="pre">HistoryDMF.duals</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="fbenm.html">FB-ENM Calculators</a></li>
+<li class="toctree-l1"><a class="reference internal" href="interpolate.html">Interpolation Utilities</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">dmf</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">DirectMaxFlux</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/dmf.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="directmaxflux">
+<h1>DirectMaxFlux<a class="headerlink" href="#directmaxflux" title="Link to this heading"></a></h1>
+<dl class="py class">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">dmf.dmf.</span></span><span class="sig-name descname"><span class="pre">DirectMaxFlux</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ref_images</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">coefs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">nsegs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">4</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dspl</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">3</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">remove_rotation_and_translation</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mass_weighted</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">parallel</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">world</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">t_eval</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">w_eval</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_vel</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_trans</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_rot</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">eps_vel</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.01</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">eps_rot</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.01</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">beta</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">nmove</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">update_teval</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">params_t_update</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">{'de':</span> <span class="pre">0.15,</span> <span class="pre">'dia':</span> <span class="pre">1.0,</span> <span class="pre">'dib':</span> <span class="pre">0.2,</span> <span class="pre">'epsb':</span> <span class="pre">0.02,</span> <span class="pre">'max_alpha0':</span> <span class="pre">0.1,</span> <span class="pre">'mua':</span> <span class="pre">5.0,</span> <span class="pre">'mub':</span> <span class="pre">5.0}</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">VariationalPathOpt</span></code></p>
+<p>Variational reaction path/transition states optimization based on
+the <strong>direct MaxFlux method</strong>.</p>
+<dl class="simple">
+<dt>Ref. 1.</dt><dd><p>S.-i. Koda and S. Saito,
+<em>Locating Transition States by Variational Reaction Path Optimization
+with an Energy-Derivative-Free Objective Function</em>
+J. Chem. Theory Comput. <strong>20</strong>, 2798–2811 (2024).</p>
+</dd>
+</dl>
+<p>This class implements the MaxFlux variational principle in the large-β
+(low-temperature) regime for locating transition states (TSs) and
+approximating minimum-energy paths (MEPs), following the formulation of
+Ref. 1.</p>
+<p>The reaction path ( x(t) ) is represented by a B-spline expansion, and
+the following functional is minimized:</p>
+<div class="math notranslate nohighlight">
+\[\tilde{I}[x] = \beta^{-1} \log I[x],\]</div>
+<p>where</p>
+<div class="math notranslate nohighlight">
+\[I[x] = \int_0^1 dt\, \vert \dot{x}(t) \vert \, e^{\beta E(x(t))}.\]</div>
+<p>With large ( beta ), the highest-energy point along the optimized
+path approximates the TS geometry.</p>
+<p>The method requires only first-order atomic forces, because the objective
+contains no derivatives of the potential energy.</p>
+<p>Additional features include:
+- construction of initial B-spline coefficients from <code class="docutils literal notranslate"><span class="pre">ref_images</span></code>
+- optional removal of translational and rotational redundancy
+- parallel energy/force evaluation (threads or MPI)
+- optional adaptive refinement of <code class="docutils literal notranslate"><span class="pre">t_eval</span></code> near the high-energy region</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ref_images</strong> (<em>list</em><em> of </em><em>ase.Atoms</em>) – List of atomic structures representing an initial guess for the path.
+If <code class="docutils literal notranslate"><span class="pre">coefs</span></code> is <strong>not</strong> provided, a piecewise linear interpolation
+through <code class="docutils literal notranslate"><span class="pre">ref_images</span></code> is constructed, and B-spline coefficients are
+obtained by fitting this interpolated path.
+If <code class="docutils literal notranslate"><span class="pre">coefs</span></code> <strong>is</strong> provided, no interpolation is performed:
+<code class="docutils literal notranslate"><span class="pre">ref_images[0]</span></code> is used only to extract atomic numbers, masses,
+cell, and PBC settings.</p></li>
+<li><p><strong>coefs</strong> (ndarray of shape <code class="docutils literal notranslate"><span class="pre">(nbasis,</span> <span class="pre">natoms,</span> <span class="pre">3)</span></code>, optional) – Initial B-spline coefficients. If provided, interpolation from
+<code class="docutils literal notranslate"><span class="pre">ref_images</span></code> is skipped and these coefficients define the initial
+path. Default: None.</p></li>
+<li><p><strong>nsegs</strong> (<em>int</em><em>, </em><em>optional</em>) – Number of B-spline segments. The number of basis functions per
+Cartesian degree of freedom is <code class="docutils literal notranslate"><span class="pre">nbasis</span> <span class="pre">=</span> <span class="pre">nsegs</span> <span class="pre">+</span> <span class="pre">dspl</span></code>.
+See Ref. 1 for details. Default: 4.</p></li>
+<li><p><strong>dspl</strong> (<em>int</em><em>, </em><em>optional</em>) – Polynomial degree of the B-spline basis. Default: 3.</p></li>
+<li><p><strong>remove_rotation_and_translation</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, remove global translational and rotational motion using
+nonlinear constraints. Default: True.</p></li>
+<li><p><strong>mass_weighted</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, the velocity norm ( vert dot{x}(t) vert ) uses mass-weighted
+coordinates. Default: False.</p></li>
+<li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – Evaluate energies and forces in parallel using threads or MPI.
+Default: False.</p></li>
+<li><p><strong>world</strong> (<em>MPI communicator</em><em>, </em><em>optional</em>) – Communicator used when <code class="docutils literal notranslate"><span class="pre">parallel=True</span></code>. Defaults to
+<code class="docutils literal notranslate"><span class="pre">ase.parallel.world</span></code>.</p></li>
+<li><p><strong>t_eval</strong> (ndarray of shape <code class="docutils literal notranslate"><span class="pre">(nmove+2,)</span></code>, optional) – <strong>Initial</strong> evaluation points in ( t in [0,1] ).
+If omitted or <code class="docutils literal notranslate"><span class="pre">update_teval</span></code> is True, an even distribution
+np.linspace(0.0,1.0,nmove+2) is generated.</p></li>
+<li><p><strong>w_eval</strong> (ndarray of shape <code class="docutils literal notranslate"><span class="pre">(nmove+2,)</span></code>, optional) – <p><strong>Initial</strong> quadrature weights for evaluating the integral</p>
+<div class="math notranslate nohighlight">
+\[I[x] \approx \sum_i w_i\, \vert \dot{x}(t) \vert \, e^{\beta E(x(t_i))}.\]</div>
+<p>If omitted, trapezoidal weights are used.</p>
+</p></li>
+<li><p><strong>n_vel</strong> (<em>int</em><em>, </em><em>optional</em>) – Number of discretized velocity constraints.
+Default: <code class="docutils literal notranslate"><span class="pre">4</span> <span class="pre">*</span> <span class="pre">nsegs</span></code>.</p></li>
+<li><p><strong>n_trans</strong> (<em>int</em><em>, </em><em>optional</em>) – Number of translational constraints.
+Default: <code class="docutils literal notranslate"><span class="pre">2</span> <span class="pre">*</span> <span class="pre">nsegs</span></code>.</p></li>
+<li><p><strong>n_rot</strong> (<em>int</em><em>, </em><em>optional</em>) – Number of rotational constraints.
+Default: <code class="docutils literal notranslate"><span class="pre">2</span> <span class="pre">*</span> <span class="pre">nsegs</span></code>.</p></li>
+<li><p><strong>eps_vel</strong> (<em>float</em><em>, </em><em>optional</em>) – Tolerance for velocity constraints. Default: 0.01.</p></li>
+<li><p><strong>eps_rot</strong> (<em>float</em><em>, </em><em>optional</em>) – Tolerance for rotational constraints. Default: 0.01.</p></li>
+<li><p><strong>beta</strong> (<em>float</em><em>, </em><em>optional</em>) – Reciprocal temperature ( beta ) (in 1/eV) used in the MaxFlux
+functional. Default: 10.0.</p></li>
+<li><p><strong>nmove</strong> (<em>int</em><em>, </em><em>optional</em>) – Number of <strong>movable</strong> interior evaluation points.
+Total number of images = <code class="docutils literal notranslate"><span class="pre">nmove</span> <span class="pre">+</span> <span class="pre">2</span></code> (including both endpoints).
+Default: 5.</p></li>
+<li><p><strong>update_teval</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, <code class="docutils literal notranslate"><span class="pre">t_eval</span></code> is adaptively updated toward the high-energy region
+during optimization. Default: False.</p></li>
+<li><p><strong>params_t_update</strong> (<em>dict</em><em>, </em><em>optional</em>) – Parameters controlling the update of <code class="docutils literal notranslate"><span class="pre">t_eval</span></code>.
+Includes keys such as <code class="docutils literal notranslate"><span class="pre">max_alpha0</span></code>, <code class="docutils literal notranslate"><span class="pre">de</span></code>, <code class="docutils literal notranslate"><span class="pre">dia</span></code>, <code class="docutils literal notranslate"><span class="pre">mua</span></code>,
+<code class="docutils literal notranslate"><span class="pre">dib</span></code>, <code class="docutils literal notranslate"><span class="pre">mub</span></code>, <code class="docutils literal notranslate"><span class="pre">epsb</span></code> (Defaults are the same as in Ref. 1).</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py">
+<span class="sig-name descname"><span class="pre">#</span> <span class="pre">----</span> <span class="pre">Path</span> <span class="pre">representation</span> <span class="pre">----</span></span></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.images">
+<span class="sig-name descname"><span class="pre">images</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.images" title="Link to this definition"></a></dt>
+<dd><p>Atomic structures at the <strong>current</strong> <code class="docutils literal notranslate"><span class="pre">t_eval</span></code>.
+The length of this list is <code class="docutils literal notranslate"><span class="pre">nmove</span> <span class="pre">+</span> <span class="pre">2</span></code> (including both endpoints).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list of ase.Atoms</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.coefs">
+<span class="sig-name descname"><span class="pre">coefs</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.coefs" title="Link to this definition"></a></dt>
+<dd><p>Current B-spline coefficients defining the variational path.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>ndarray of shape <code class="docutils literal notranslate"><span class="pre">(nbasis,</span> <span class="pre">natoms,</span> <span class="pre">3)</span></code></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.angs">
+<span class="sig-name descname"><span class="pre">angs</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.angs" title="Link to this definition"></a></dt>
+<dd><p>Euler angles used when removing rotational redundancy.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>ndarray of shape <code class="docutils literal notranslate"><span class="pre">(3,)</span></code></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py">
+<span class="sig-name descname"><span class="pre">#</span> <span class="pre">----</span> <span class="pre">Energies</span> <span class="pre">and</span> <span class="pre">forces</span> <span class="pre">----</span></span></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.energies">
+<span class="sig-name descname"><span class="pre">energies</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.energies" title="Link to this definition"></a></dt>
+<dd><p>Energies evaluated at the <strong>current</strong> <code class="docutils literal notranslate"><span class="pre">t_eval</span></code> (shifted by <code class="docutils literal notranslate"><span class="pre">e0</span></code>).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>ndarray of shape <code class="docutils literal notranslate"><span class="pre">(nmove+2,)</span></code></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.forces">
+<span class="sig-name descname"><span class="pre">forces</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.forces" title="Link to this definition"></a></dt>
+<dd><p>Forces evaluated at the <strong>current</strong> <code class="docutils literal notranslate"><span class="pre">t_eval</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>ndarray of shape <code class="docutils literal notranslate"><span class="pre">(nmove+2,</span> <span class="pre">natoms,</span> <span class="pre">3)</span></code></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py">
+<span class="sig-name descname"><span class="pre">#</span> <span class="pre">----</span> <span class="pre">Evaluation</span> <span class="pre">grid</span> <span class="pre">----</span></span></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.t_eval">
+<span class="sig-name descname"><span class="pre">t_eval</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.t_eval" title="Link to this definition"></a></dt>
+<dd><p><strong>Current</strong> energy evaluation points along the path.
+If <code class="docutils literal notranslate"><span class="pre">update_teval=True</span></code>, these differ from the initial values.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>ndarray of shape <code class="docutils literal notranslate"><span class="pre">(nmove+2,)</span></code></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.w_eval">
+<span class="sig-name descname"><span class="pre">w_eval</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.w_eval" title="Link to this definition"></a></dt>
+<dd><p><strong>Current</strong> quadrature weights associated with <code class="docutils literal notranslate"><span class="pre">t_eval</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>ndarray of shape <code class="docutils literal notranslate"><span class="pre">(nmove+2,)</span></code></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py">
+<span class="sig-name descname"><span class="pre">#</span> <span class="pre">----</span> <span class="pre">Constraint</span> <span class="pre">configuration</span> <span class="pre">----</span></span></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.n_vel">
+<span class="sig-name descname"><span class="pre">n_vel</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.n_vel" title="Link to this definition"></a></dt>
+<dd><p>Number of velocity constraints.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.n_trans">
+<span class="sig-name descname"><span class="pre">n_trans</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.n_trans" title="Link to this definition"></a></dt>
+<dd><p>Number of translational constraints.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.n_rot">
+<span class="sig-name descname"><span class="pre">n_rot</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.n_rot" title="Link to this definition"></a></dt>
+<dd><p>Number of rotational constraints.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.eps_vel">
+<span class="sig-name descname"><span class="pre">eps_vel</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.eps_vel" title="Link to this definition"></a></dt>
+<dd><p>Tolerance for velocity constraints.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>float</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.eps_rot">
+<span class="sig-name descname"><span class="pre">eps_rot</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.eps_rot" title="Link to this definition"></a></dt>
+<dd><p>Tolerance for rotational constraints.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>float</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.remove_rotation_and_translation">
+<span class="sig-name descname"><span class="pre">remove_rotation_and_translation</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.remove_rotation_and_translation" title="Link to this definition"></a></dt>
+<dd><p>Whether translational/rotational redundancy is removed.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py">
+<span class="sig-name descname"><span class="pre">#</span> <span class="pre">----</span> <span class="pre">B-spline</span> <span class="pre">representation</span> <span class="pre">----</span></span></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.nsegs">
+<span class="sig-name descname"><span class="pre">nsegs</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.nsegs" title="Link to this definition"></a></dt>
+<dd><p>Number of B-spline segments.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.dspl">
+<span class="sig-name descname"><span class="pre">dspl</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.dspl" title="Link to this definition"></a></dt>
+<dd><p>Degree of the B-spline basis.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.nbasis">
+<span class="sig-name descname"><span class="pre">nbasis</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.nbasis" title="Link to this definition"></a></dt>
+<dd><p>Number of B-spline basis functions per Cartesian degree of freedom.
+<code class="docutils literal notranslate"><span class="pre">nbasis</span> <span class="pre">=</span> <span class="pre">nsegs</span> <span class="pre">+</span> <span class="pre">dspl</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py">
+<span class="sig-name descname"><span class="pre">#</span> <span class="pre">----</span> <span class="pre">MaxFlux</span> <span class="pre">functional</span> <span class="pre">parameters</span> <span class="pre">----</span></span></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.beta">
+<span class="sig-name descname"><span class="pre">beta</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.beta" title="Link to this definition"></a></dt>
+<dd><p>Reciprocal temperature ( beta ).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>float</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.nmove">
+<span class="sig-name descname"><span class="pre">nmove</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.nmove" title="Link to this definition"></a></dt>
+<dd><p>Number of movable interior evaluation points.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.update_teval">
+<span class="sig-name descname"><span class="pre">update_teval</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.update_teval" title="Link to this definition"></a></dt>
+<dd><p>Whether <code class="docutils literal notranslate"><span class="pre">t_eval</span></code> is adaptively updated.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.params_t_update">
+<span class="sig-name descname"><span class="pre">params_t_update</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.params_t_update" title="Link to this definition"></a></dt>
+<dd><p>Parameters controlling the update of <code class="docutils literal notranslate"><span class="pre">t_eval</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>dict</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py">
+<span class="sig-name descname"><span class="pre">#</span> <span class="pre">----</span> <span class="pre">Optimization</span> <span class="pre">----</span></span></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.ipopt_options">
+<span class="sig-name descname"><span class="pre">ipopt_options</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.ipopt_options" title="Link to this definition"></a></dt>
+<dd><p>IPOPT options used for the optimization.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>dict</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.history">
+<span class="sig-name descname"><span class="pre">history</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.history" title="Link to this definition"></a></dt>
+<dd><p>Container storing iteration-by-iteration quantities.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#dmf.dmf.HistoryDMF" title="dmf.dmf.HistoryDMF">HistoryDMF</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.add_ipopt_options">
+<span class="sig-name descname"><span class="pre">add_ipopt_options</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dict_options</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.add_ipopt_options" title="Link to this definition"></a></dt>
+<dd><p>Add or update IPOPT options.</p>
+<p>This method updates <code class="docutils literal notranslate"><span class="pre">self.ipopt_options</span></code> with the key–value pairs
+given in <code class="docutils literal notranslate"><span class="pre">dict_options</span></code> and forwards them to IPOPT via
+<code class="docutils literal notranslate"><span class="pre">self.add_option</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>dict_options</strong> (<em>dict</em>) – Dictionary of IPOPT options (e.g., <code class="docutils literal notranslate"><span class="pre">{&quot;tol&quot;:</span> <span class="pre">1e-3}</span></code>).</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.add_option">
+<span class="sig-name descname"><span class="pre">add_option</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keyword</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">val</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.add_option" title="Link to this definition"></a></dt>
+<dd><p>Add a keyword/value option pair to the problem.</p>
+<p>See the Ipopt documentaion for details on available options.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>keyword</strong> (<em>str</em>) – Option name.</p></li>
+<li><p><strong>val</strong> (<em>str</em><em>, </em><em>int</em><em> or </em><em>float</em>) – Value of the option. The type of val should match the option
+definition as described in the Ipopt documentation.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.close">
+<span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.close" title="Link to this definition"></a></dt>
+<dd><p>Deallocate memory resources used by the Ipopt package.</p>
+<p>Called implicitly by the <code class="xref py py-class docutils literal notranslate"><span class="pre">Problem</span></code> class destructor.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.constraints">
+<span class="sig-name descname"><span class="pre">constraints</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.constraints" title="Link to this definition"></a></dt>
+<dd><p>IPOPT callback: nonlinear constraint values.</p>
+<p>This method is not intended to be called directly by users.
+It is invoked internally by IPOPT during the optimization process.
+The argument <code class="docutils literal notranslate"><span class="pre">x</span></code> is the flattened optimization variable vector,
+and the return value is the array of constraint values at that state.</p>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.e0">
+<em class="property"><span class="pre">property</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">e0</span></span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.e0" title="Link to this definition"></a></dt>
+<dd><p>float:
+Minimum endpoint energy used to shift the energy scale.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.get_current_iterate">
+<span class="sig-name descname"><span class="pre">get_current_iterate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">scaled</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.get_current_iterate" title="Link to this definition"></a></dt>
+<dd><p>Return the current iterate vectors during an Ipopt solve</p>
+<p>The iterate contains vectors for primal variables, bound multipliers,
+constraint function values, and constraint multipliers. Here, the
+constraints are treated as a single function rather than separating
+equality and inequality constraints. This method can only be called
+during an intermediate callback.</p>
+<p><strong>Only supports Ipopt &gt;=3.14.0</strong></p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>scaled</strong> (<code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code>) – Whether the scaled iterate vectors should be returned</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>:py:class:`dict` or `None`</strong> – A dict containing the iterate vector with keys <code class="docutils literal notranslate"><span class="pre">&quot;x&quot;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">&quot;mult_x_L&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;mult_x_U&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;g&quot;</span></code>, and <code class="docutils literal notranslate"><span class="pre">&quot;mult_g&quot;</span></code>.
+If iterate vectors cannot be obtained, <code class="docutils literal notranslate"><span class="pre">None</span></code> is returned.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.get_current_violations">
+<span class="sig-name descname"><span class="pre">get_current_violations</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">scaled</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.get_current_violations" title="Link to this definition"></a></dt>
+<dd><p>Return the current violation vectors during an Ipopt solve</p>
+<p>Violations returned are primal variable bound violations, bound
+complementarities, the gradient of the Lagrangian, constraint
+violation, and constraint complementarity. Here, the constraints
+are treated as a single function rather than separating equality
+and inequality constraints. This method can only be called during
+an intermediate callback.</p>
+<p><strong>Only supports Ipopt &gt;=3.14.0</strong></p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>scaled</strong> (<code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code>) – Whether to scale the returned violations</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>:py:class:`dict` or `None`</strong> – A dict containing the violation vector with keys
+<code class="docutils literal notranslate"><span class="pre">&quot;x_L_violation&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;x_U_violation&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;compl_x_L&quot;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">&quot;compl_x_U&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;grad_lag_x&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;g_violation&quot;</span></code>,
+and <code class="docutils literal notranslate"><span class="pre">&quot;compl_g&quot;</span></code>. If violation vectors cannot be obtained,
+<code class="docutils literal notranslate"><span class="pre">None</span></code> is returned.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.get_positions">
+<span class="sig-name descname"><span class="pre">get_positions</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">t</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">P</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">nu</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.get_positions" title="Link to this definition"></a></dt>
+<dd><p>Evaluate the positions (or their derivatives) along the path.</p>
+<p>Normally, users provide only <code class="docutils literal notranslate"><span class="pre">t</span></code>; however, advanced users may supply
+precomputed basis values <code class="docutils literal notranslate"><span class="pre">P</span></code> (from <code class="docutils literal notranslate"><span class="pre">_get_basis_values()</span></code>) to avoid
+repeated evaluations.</p>
+<p>If both <code class="docutils literal notranslate"><span class="pre">t</span></code> and <code class="docutils literal notranslate"><span class="pre">P</span></code> are provided, <code class="docutils literal notranslate"><span class="pre">P</span></code> takes priority.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>t</strong> (<em>ndarray</em><em>, </em><em>optional</em>) – 1D array of parameter values in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">1]</span></code> at which positions (or
+derivatives) are evaluated.  If omitted, <code class="docutils literal notranslate"><span class="pre">t_eval</span></code> is used.</p></li>
+<li><p><strong>P</strong> (<em>ndarray</em><em>, </em><em>optional</em>) – Precomputed B-spline basis values from <code class="docutils literal notranslate"><span class="pre">_get_basis_values()</span></code>.
+Default: None.</p></li>
+<li><p><strong>nu</strong> (<em>int</em><em>, </em><em>optional</em>) – Derivative order with respect to <code class="docutils literal notranslate"><span class="pre">t</span></code> (0, 1, or 2). Default: 0.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>ndarray</strong> – Array of shape <code class="docutils literal notranslate"><span class="pre">(len(t),</span> <span class="pre">natoms,</span> <span class="pre">3)</span></code> containing the positions
+(<code class="docutils literal notranslate"><span class="pre">nu</span> <span class="pre">=</span> <span class="pre">0</span></code>) or the <code class="docutils literal notranslate"><span class="pre">nu</span></code>-th derivatives of the path.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.get_x">
+<span class="sig-name descname"><span class="pre">get_x</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.get_x" title="Link to this definition"></a></dt>
+<dd><p>Return the flattened optimization variable vector used by IPOPT.</p>
+<p>Although mainly intended for internal use, this method is exposed
+because <a class="reference internal" href="#dmf.dmf.DirectMaxFlux.solve" title="dmf.dmf.DirectMaxFlux.solve"><code class="xref py py-meth docutils literal notranslate"><span class="pre">solve()</span></code></a> returns the optimized variable vector <code class="docutils literal notranslate"><span class="pre">x</span></code>.
+The returned array contains all internal degrees of freedom:</p>
+<ul class="simple">
+<li><p>the flattened interior B-spline coefficients <code class="docutils literal notranslate"><span class="pre">coefs[1:-1]</span></code>
+(endpoint coefficients are fixed), and</p></li>
+<li><p>the rotation angles <code class="docutils literal notranslate"><span class="pre">angs</span></code> if
+<code class="docutils literal notranslate"><span class="pre">remove_rotation_and_translation=True</span></code>.</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>x</strong> (<em>ndarray of shape (nvar,)</em>) – Flattened optimization variable vector.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.gradient">
+<span class="sig-name descname"><span class="pre">gradient</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.gradient" title="Link to this definition"></a></dt>
+<dd><p>IPOPT callback: gradient of the objective.</p>
+<p>This method is not intended to be called directly by users.
+It is invoked internally by IPOPT during the optimization process.
+The argument <code class="docutils literal notranslate"><span class="pre">x</span></code> is the flattened optimization variable vector,
+and the return value is the gradient of the objective with respect to <code class="docutils literal notranslate"><span class="pre">x</span></code>.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.interpolate_energies">
+<span class="sig-name descname"><span class="pre">interpolate_energies</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">t_eval</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">energies</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">forces</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">coefs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">delta_e</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.interpolate_energies" title="Link to this definition"></a></dt>
+<dd><p>Construct a piecewise-cubic interpolation of the energy along the path.</p>
+<p>This method reconstructs a smooth interpolation
+<span class="math notranslate nohighlight">\(\tilde{E}(t)\)</span> of the discrete energy values evaluated at
+<code class="docutils literal notranslate"><span class="pre">t_eval</span></code>.  The interpolation is <code class="docutils literal notranslate"><span class="pre">C^1</span></code>-continuous and uses both
+energies and their first derivatives.</p>
+<p>Optionally, the method can also locate the values of <code class="docutils literal notranslate"><span class="pre">t</span></code> satisfying</p>
+<div class="math notranslate nohighlight">
+\[\tilde{E}(t) = E_{\max} - \Delta E,\]</div>
+<p>for user-specified <code class="docutils literal notranslate"><span class="pre">delta_e</span></code>.</p>
+<p>See Ref. 1 for details.</p>
+<dl class="field-list">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>t_eval</strong> (<em>ndarray</em><em>, </em><em>optional</em>) – 1D array of parameter values at which energies/forces were evaluated.
+If omitted, <code class="docutils literal notranslate"><span class="pre">self.t_eval</span></code> is used.  Only the region
+<code class="docutils literal notranslate"><span class="pre">t_eval</span> <span class="pre">&lt;=</span> <span class="pre">1</span></code> is used internally.</p></li>
+<li><p><strong>energies</strong> (<em>ndarray</em><em>, </em><em>optional</em>) – Energy values at <code class="docutils literal notranslate"><span class="pre">t_eval</span></code>.  If omitted, <code class="docutils literal notranslate"><span class="pre">self.energies</span></code> is used.</p></li>
+<li><p><strong>forces</strong> (<em>ndarray</em><em>, </em><em>optional</em>) – Forces at <code class="docutils literal notranslate"><span class="pre">t_eval</span></code> with shape <code class="docutils literal notranslate"><span class="pre">(len(t_eval),</span> <span class="pre">natoms,</span> <span class="pre">3)</span></code>.
+If omitted, <code class="docutils literal notranslate"><span class="pre">self.forces</span></code> is used.</p></li>
+<li><p><strong>coefs</strong> (ndarray of shape <code class="docutils literal notranslate"><span class="pre">(nbasis,</span> <span class="pre">natoms,</span> <span class="pre">3)</span></code>, optional) – B-spline control-point coefficients.
+If omitted, <code class="docutils literal notranslate"><span class="pre">self.coefs</span></code> is used.</p></li>
+<li><p><strong>delta_e</strong> (<em>list</em><em> of </em><em>float</em><em>, </em><em>optional</em>) – <p>Energy offsets <span class="math notranslate nohighlight">\(\Delta E\)</span>.  If provided,
+this method also returns the corresponding parameter values <code class="docutils literal notranslate"><span class="pre">t</span></code>
+satisfying</p>
+<div class="math notranslate nohighlight">
+\[\tilde{E}(t) = E_{\max} - \Delta E.\]</div>
+</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><ul>
+<li><p><strong>polys</strong> (ndarray of shape <code class="docutils literal notranslate"><span class="pre">(len(t_eval)</span> <span class="pre">-</span> <span class="pre">1,</span> <span class="pre">4)</span></code>) – Polynomial coefficients defining the piecewise cubic interpolation.
+Each segment corresponds to:</p>
+<div class="math notranslate nohighlight">
+\[\tilde{E}(t)
+= c_0 + c_1 t + c_2 t^2 + c_3 t^3.\]</div>
+</li>
+<li><p><strong>t_max</strong> (<em>float</em>) – The parameter value <code class="docutils literal notranslate"><span class="pre">t</span></code> at which the interpolated energy
+<span class="math notranslate nohighlight">\(\tilde{E}(t)\)</span> attains its maximum.</p></li>
+<li><p><strong>e_max</strong> (<em>float</em>) – The maximum interpolated energy <span class="math notranslate nohighlight">\(\tilde{E}(t_{\max})\)</span>.</p></li>
+<li><p><strong>t_de</strong> (<em>list of ndarray, optional</em>) – Returned only when <code class="docutils literal notranslate"><span class="pre">delta_e</span></code> is provided.
+<code class="docutils literal notranslate"><span class="pre">t_de[j]</span></code> contains all roots satisfying
+<span class="math notranslate nohighlight">\(\tilde{E}(t) = E_{\max} - \Delta E_j\)</span>.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.jacobian">
+<span class="sig-name descname"><span class="pre">jacobian</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.jacobian" title="Link to this definition"></a></dt>
+<dd><p>IPOPT callback: Jacobian of the constraints.</p>
+<p>This method is not intended to be called directly by users.
+It is invoked internally by IPOPT during the optimization process.
+The argument <code class="docutils literal notranslate"><span class="pre">x</span></code> is the flattened optimization variable vector,
+and the return value is the Jacobian matrix of the constraint functions.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.objective">
+<span class="sig-name descname"><span class="pre">objective</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.objective" title="Link to this definition"></a></dt>
+<dd><p>IPOPT callback: objective function.</p>
+<p>This method is not intended to be called directly by users.
+It is invoked internally by IPOPT during the optimization process.
+The argument <code class="docutils literal notranslate"><span class="pre">x</span></code> is the flattened optimization variable vector,
+and the return value is the scalar objective evaluated at that state.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.set_coefs_angs">
+<span class="sig-name descname"><span class="pre">set_coefs_angs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">coefs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.set_coefs_angs" title="Link to this definition"></a></dt>
+<dd><p>Update the B-spline coefficients and/or rotation angles.</p>
+<p>This method updates <code class="docutils literal notranslate"><span class="pre">coefs</span></code> and <code class="docutils literal notranslate"><span class="pre">angs</span></code> if the
+corresponding arguments are provided.  After updating the angles,
+the final B-spline control point (<code class="docutils literal notranslate"><span class="pre">coefs[-1]</span></code>) is recomputed as</p>
+<div class="math notranslate nohighlight">
+\[\mathrm{coefs}[-1] = \mathrm{coefs}_0[-1] \, R_x R_y R_z,\]</div>
+<p>where <code class="docutils literal notranslate"><span class="pre">R_x,</span> <span class="pre">R_y,</span> <span class="pre">R_z</span></code> are the rotation matrices generated from
+<code class="docutils literal notranslate"><span class="pre">self.angs</span></code>.  This ensures that the endpoint geometry is kept
+consistent under rotational constraints.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>coefs</strong> (<em>ndarray</em><em> of </em><em>shape</em><em> (</em><em>nbasis</em><em>, </em><em>natoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>optional</em>) – New B-spline coefficients.
+If omitted, the current coefficients are preserved.</p></li>
+<li><p><strong>angs</strong> (<em>ndarray</em><em> of </em><em>shape</em><em> (</em><em>3</em><em>,</em><em>)</em><em>, </em><em>optional</em>) – Rotation angles used to the final endpoint alignment.
+If omitted, the current angles are preserved.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.set_positions">
+<span class="sig-name descname"><span class="pre">set_positions</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">coefs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.set_positions" title="Link to this definition"></a></dt>
+<dd><p>Update the positions of all images along the path.</p>
+<p>This method first updates the B-spline coefficients and/or rotation
+angles by calling <a class="reference internal" href="#dmf.dmf.DirectMaxFlux.set_coefs_angs" title="dmf.dmf.DirectMaxFlux.set_coefs_angs"><code class="xref py py-meth docutils literal notranslate"><span class="pre">set_coefs_angs()</span></code></a>.  It then recomputes the
+atomic positions along the path using <a class="reference internal" href="#dmf.dmf.DirectMaxFlux.get_positions" title="dmf.dmf.DirectMaxFlux.get_positions"><code class="xref py py-meth docutils literal notranslate"><span class="pre">get_positions()</span></code></a>, and
+writes these positions into the existing <code class="docutils literal notranslate"><span class="pre">self.images</span></code> objects.</p>
+<p>Note that this method does <strong>not</strong> change the number of images;
+it only updates their positions according to the current path
+parameters.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>coefs</strong> (<em>ndarray</em><em> of </em><em>shape</em><em> (</em><em>nbasis</em><em>, </em><em>natoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>optional</em>) – New B-spline coefficients.  If omitted, the existing coefficients
+are preserved.</p></li>
+<li><p><strong>angs</strong> (<em>ndarray</em><em> of </em><em>shape</em><em> (</em><em>3</em><em>,</em><em>)</em><em>, </em><em>optional</em>) – Rotation angles used for endpoint alignment.  If omitted,
+the existing angles are preserved.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.set_problem_scaling">
+<span class="sig-name descname"><span class="pre">set_problem_scaling</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">obj_scaling</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">x_scaling</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">g_scaling</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.set_problem_scaling" title="Link to this definition"></a></dt>
+<dd><p>Optional function for setting scaling parameters for the problem.</p>
+<p>To use the scaling parameters set the option <code class="docutils literal notranslate"><span class="pre">nlp_scaling_method</span></code> to
+<code class="docutils literal notranslate"><span class="pre">user-scaling</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>obj_scaling</strong> (<em>float</em>) – Determines, how Ipopt should internally scale the objective
+function. For example, if this number is chosen to be 10, then
+Ipopt solves internally an optimization problem that has 10 times
+the value of the original objective. In particular, if this value
+is negative, then Ipopt will maximize the objective function
+instead of minimizing it.</p></li>
+<li><p><strong>x_scaling</strong> (<em>array-like</em><em>, </em><em>shape</em><em>(</em><em>n</em><em>, </em><em>)</em>) – The scaling factors for the variables. If <code class="docutils literal notranslate"><span class="pre">None</span></code>, no scaling is
+done.</p></li>
+<li><p><strong>g_scaling</strong> (<em>array-like</em><em>, </em><em>shape</em><em>(</em><em>m</em><em>, </em><em>)</em>) – The scaling factors for the constrains. If <code class="docutils literal notranslate"><span class="pre">None</span></code>, no scaling is
+done.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.set_t_eval">
+<span class="sig-name descname"><span class="pre">set_t_eval</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">t_eval</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.set_t_eval" title="Link to this definition"></a></dt>
+<dd><p>Set the energy evaluation points <code class="docutils literal notranslate"><span class="pre">t_eval</span></code>.</p>
+<p>This also updates the cached B-spline basis values used for evaluating
+positions and derivatives.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>t_eval</strong> (<em>ndarray</em>) – 1D array of parameter values in the interval <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">1]</span></code>.
+Its length must match the length of the initial <code class="docutils literal notranslate"><span class="pre">t_eval</span></code> used
+at initialization, because the number of images is fixed.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.set_w_eval">
+<span class="sig-name descname"><span class="pre">set_w_eval</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">w_eval</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.set_w_eval" title="Link to this definition"></a></dt>
+<dd><p>Set the quadrature weights <code class="docutils literal notranslate"><span class="pre">w_eval</span></code> used in the action integral.</p>
+<p>If <code class="docutils literal notranslate"><span class="pre">w_eval</span></code> is not provided, trapezoidal weights are generated from
+the current values of <code class="docutils literal notranslate"><span class="pre">t_eval</span></code>.  The number of weights must
+match the number of energy evaluation points, which is fixed after
+initialization.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>w_eval</strong> (<em>ndarray</em><em>, </em><em>optional</em>) – 1D array of quadrature weights corresponding to <code class="docutils literal notranslate"><span class="pre">t_eval</span></code>.
+Its length must match that of <code class="docutils literal notranslate"><span class="pre">t_eval</span></code>.  If omitted,
+trapezoidal-rule weights are constructed automatically.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.set_x">
+<span class="sig-name descname"><span class="pre">set_x</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.set_x" title="Link to this definition"></a></dt>
+<dd><p>Update <code class="docutils literal notranslate"><span class="pre">coefs</span></code> and <code class="docutils literal notranslate"><span class="pre">angs</span></code> from the flattened optimization vector.</p>
+<p>This method is normally not called directly by end-users; it is invoked
+internally during IPOPT callbacks such as <a class="reference internal" href="#dmf.dmf.DirectMaxFlux.objective" title="dmf.dmf.DirectMaxFlux.objective"><code class="xref py py-meth docutils literal notranslate"><span class="pre">objective()</span></code></a>,
+<a class="reference internal" href="#dmf.dmf.DirectMaxFlux.gradient" title="dmf.dmf.DirectMaxFlux.gradient"><code class="xref py py-meth docutils literal notranslate"><span class="pre">gradient()</span></code></a>, <a class="reference internal" href="#dmf.dmf.DirectMaxFlux.constraints" title="dmf.dmf.DirectMaxFlux.constraints"><code class="xref py py-meth docutils literal notranslate"><span class="pre">constraints()</span></code></a>, and <a class="reference internal" href="#dmf.dmf.DirectMaxFlux.jacobian" title="dmf.dmf.DirectMaxFlux.jacobian"><code class="xref py py-meth docutils literal notranslate"><span class="pre">jacobian()</span></code></a>.</p>
+<p>The input vector <code class="docutils literal notranslate"><span class="pre">x</span></code> must be exactly the one produced by
+<a class="reference internal" href="#dmf.dmf.DirectMaxFlux.get_x" title="dmf.dmf.DirectMaxFlux.get_x"><code class="xref py py-meth docutils literal notranslate"><span class="pre">get_x()</span></code></a>.  The method reconstructs:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">coefs[1:-1]</span></code> (interior B-spline control points), and</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">angs</span></code> (rotation angles, if enabled),</p></li>
+</ul>
+<p>and then updates all image positions via <a class="reference internal" href="#dmf.dmf.DirectMaxFlux.set_positions" title="dmf.dmf.DirectMaxFlux.set_positions"><code class="xref py py-meth docutils literal notranslate"><span class="pre">set_positions()</span></code></a>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>x</strong> (<em>ndarray</em><em> of </em><em>shape</em><em> (</em><em>nvar</em><em>,</em><em>)</em>) – Flattened optimization variable vector.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.solve">
+<span class="sig-name descname"><span class="pre">solve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tol</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'tight'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.solve" title="Link to this definition"></a></dt>
+<dd><p>Solve the variational optimization problem using IPOPT.</p>
+<p>The current path parameters are flattened into a 1D variable vector
+<code class="docutils literal notranslate"><span class="pre">x</span></code> and passed to IPOPT.  After optimization, the updated vector is
+written back via <code class="docutils literal notranslate"><span class="pre">set_x</span></code>.  The return values are those provided by
+<code class="docutils literal notranslate"><span class="pre">cyipopt.Problem.solve</span></code>.</p>
+<p>The argument <code class="docutils literal notranslate"><span class="pre">tol</span></code> provides a convenient shortcut for adjusting the
+IPOPT option <code class="docutils literal notranslate"><span class="pre">dual_inf_tol</span></code> using the presets from Ref. 1:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">'tight'</span></code>  →  <code class="docutils literal notranslate"><span class="pre">dual_inf_tol</span> <span class="pre">=</span> <span class="pre">0.04</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">'middle'</span></code> →  <code class="docutils literal notranslate"><span class="pre">dual_inf_tol</span> <span class="pre">=</span> <span class="pre">0.10</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">'loose'</span></code>  →  <code class="docutils literal notranslate"><span class="pre">dual_inf_tol</span> <span class="pre">=</span> <span class="pre">0.20</span></code></p></li>
+<li><p>a float value directly sets <code class="docutils literal notranslate"><span class="pre">dual_inf_tol</span></code> to that number.</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>tol</strong> (<em>{'tight'</em><em>, </em><em>'middle'</em><em>, </em><em>'loose'}</em><em> or </em><em>float</em><em>, </em><em>optional</em>) – Desired dual infeasibility tolerance.  Default is <code class="docutils literal notranslate"><span class="pre">'tight'</span></code>.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><strong>x_opt</strong> (<em>ndarray</em>) – Optimized 1D variable array.</p></li>
+<li><p><strong>info</strong> (<em>dict</em>) – IPOPT information dictionary.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.get_forces">
+<span class="sig-name descname"><span class="pre">get_forces</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.get_forces" title="Link to this definition"></a></dt>
+<dd><p>Evaluate forces and energies for all images along the path.</p>
+<p>For each image at <code class="docutils literal notranslate"><span class="pre">t</span> <span class="pre">=</span> <span class="pre">t_eval[i]</span></code>, this method computes the atomic
+forces and potential energy using the calculator attached to the
+corresponding <code class="docutils literal notranslate"><span class="pre">ase.Atoms</span></code> object.  Forces and energies at the
+endpoints are obtained from cached values (<code class="docutils literal notranslate"><span class="pre">_f_ends</span></code> and <code class="docutils literal notranslate"><span class="pre">_e_ends</span></code>)
+with a small tolerance region near <code class="docutils literal notranslate"><span class="pre">t</span> <span class="pre">=</span> <span class="pre">0</span></code> and <code class="docutils literal notranslate"><span class="pre">t</span> <span class="pre">=</span> <span class="pre">1</span></code>.  Interior
+images are evaluated serially, using threads, or using MPI depending
+on the settings of <code class="docutils literal notranslate"><span class="pre">parallel</span></code> and <code class="docutils literal notranslate"><span class="pre">world</span></code>.</p>
+<p>After calling this method, the arrays <code class="docutils literal notranslate"><span class="pre">self.forces</span></code> and
+<code class="docutils literal notranslate"><span class="pre">self.energies</span></code> are updated in place.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>ndarray</strong> – Array of shape <code class="docutils literal notranslate"><span class="pre">(len(t_eval),</span> <span class="pre">natoms,</span> <span class="pre">3)</span></code> containing the forces
+for all images along the current path.</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>Endpoint forces are stored in <code class="docutils literal notranslate"><span class="pre">_f_ends</span></code> and are reused for
+<code class="docutils literal notranslate"><span class="pre">t</span> <span class="pre">&lt;</span> <span class="pre">eps_t</span></code> and <code class="docutils literal notranslate"><span class="pre">t</span> <span class="pre">&gt;</span> <span class="pre">1</span> <span class="pre">-</span> <span class="pre">eps_t</span></code>.</p></li>
+<li><p>If <code class="docutils literal notranslate"><span class="pre">remove_rotation_and_translation</span></code> is enabled, forces at the
+final endpoint are rotated to match the aligned coordinate frame.</p></li>
+<li><p>When MPI is used, each rank evaluates a subset of interior images;
+results are broadcast so that all ranks obtain full arrays.</p></li>
+</ul>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="dmf.dmf.DirectMaxFlux.intermediate">
+<span class="sig-name descname"><span class="pre">intermediate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alg_mod</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">iter_count</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">obj_value</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inf_pr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inf_du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mu</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">d_norm</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">regularization_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha_du</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha_pr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ls_trials</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#dmf.dmf.DirectMaxFlux.intermediate" title="Link to this definition"></a></dt>
+<dd><p>IPOPT callback: per-iteration monitor.</p>
+<p>This method is not intended to be called directly by users.
+It is invoked internally by IPOPT at the end of each iteration.
+The arguments are provided by IPOPT and follow its callback
+interface specification.</p>
+<p>In addition to the default IPOPT behavior, this method records
+iteration-by-iteration quantities into <code class="docutils literal notranslate"><span class="pre">self.history</span></code>.
+See <a class="reference internal" href="#dmf.dmf.HistoryDMF" title="dmf.dmf.HistoryDMF"><code class="xref py py-class docutils literal notranslate"><span class="pre">HistoryDMF</span></code></a> for details.</p>
+<p>If <code class="docutils literal notranslate"><span class="pre">update_teval=True</span></code>, this method also adaptively updates
+the energy evaluation points <code class="docutils literal notranslate"><span class="pre">t_eval</span></code> based on the current
+energy profile and dual infeasibility.  See Ref. 1 for details.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alg_mod</strong> – Values supplied directly by IPOPT at each iteration.
+These are passed through unchanged and are not meant
+to be modified by the user.</p></li>
+<li><p><strong>iter_count</strong> – Values supplied directly by IPOPT at each iteration.
+These are passed through unchanged and are not meant
+to be modified by the user.</p></li>
+<li><p><strong>obj_value</strong> – Values supplied directly by IPOPT at each iteration.
+These are passed through unchanged and are not meant
+to be modified by the user.</p></li>
+<li><p><strong>inf_pr</strong> – Values supplied directly by IPOPT at each iteration.
+These are passed through unchanged and are not meant
+to be modified by the user.</p></li>
+<li><p><strong>inf_du</strong> – Values supplied directly by IPOPT at each iteration.
+These are passed through unchanged and are not meant
+to be modified by the user.</p></li>
+<li><p><strong>mu</strong> – Values supplied directly by IPOPT at each iteration.
+These are passed through unchanged and are not meant
+to be modified by the user.</p></li>
+<li><p><strong>d_norm</strong> – Values supplied directly by IPOPT at each iteration.
+These are passed through unchanged and are not meant
+to be modified by the user.</p></li>
+<li><p><strong>regularization_size</strong> – Values supplied directly by IPOPT at each iteration.
+These are passed through unchanged and are not meant
+to be modified by the user.</p></li>
+<li><p><strong>alpha_du</strong> – Values supplied directly by IPOPT at each iteration.
+These are passed through unchanged and are not meant
+to be modified by the user.</p></li>
+<li><p><strong>alpha_pr</strong> – Values supplied directly by IPOPT at each iteration.
+These are passed through unchanged and are not meant
+to be modified by the user.</p></li>
+<li><p><strong>ls_trials</strong> – Values supplied directly by IPOPT at each iteration.
+These are passed through unchanged and are not meant
+to be modified by the user.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<section id="historydmf">
+<h2>HistoryDMF<a class="headerlink" href="#historydmf" title="Link to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="dmf.dmf.HistoryDMF">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">dmf.dmf.</span></span><span class="sig-name descname"><span class="pre">HistoryDMF</span></span><a class="headerlink" href="#dmf.dmf.HistoryDMF" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Container storing the optimization history of the <code class="docutils literal notranslate"><span class="pre">DirectMaxFlux</span></code> method.</p>
+<p>This object collects various physical and numerical quantities evaluated
+along the reaction path during the optimization.  At each IPOPT iteration,
+the <code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.intermediate</span></code> method appends the current values of
+these quantities to the corresponding lists below.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.HistoryDMF.forces">
+<span class="sig-name descname"><span class="pre">forces</span></span><a class="headerlink" href="#dmf.dmf.HistoryDMF.forces" title="Link to this definition"></a></dt>
+<dd><p>History of <code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.forces</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list of ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.HistoryDMF.energies">
+<span class="sig-name descname"><span class="pre">energies</span></span><a class="headerlink" href="#dmf.dmf.HistoryDMF.energies" title="Link to this definition"></a></dt>
+<dd><p>History of <code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.energies</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list of ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.HistoryDMF.coefs">
+<span class="sig-name descname"><span class="pre">coefs</span></span><a class="headerlink" href="#dmf.dmf.HistoryDMF.coefs" title="Link to this definition"></a></dt>
+<dd><p>History of <code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.coefs</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list of ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.HistoryDMF.angs">
+<span class="sig-name descname"><span class="pre">angs</span></span><a class="headerlink" href="#dmf.dmf.HistoryDMF.angs" title="Link to this definition"></a></dt>
+<dd><p>History of <code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.angs</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list of ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.HistoryDMF.t_eval">
+<span class="sig-name descname"><span class="pre">t_eval</span></span><a class="headerlink" href="#dmf.dmf.HistoryDMF.t_eval" title="Link to this definition"></a></dt>
+<dd><p>History of <code class="docutils literal notranslate"><span class="pre">DirectMaxFlux.t_eval</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list of ndarray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.HistoryDMF.tmax">
+<span class="sig-name descname"><span class="pre">tmax</span></span><a class="headerlink" href="#dmf.dmf.HistoryDMF.tmax" title="Link to this definition"></a></dt>
+<dd><p>History of the location <code class="docutils literal notranslate"><span class="pre">t_max</span></code> corresponding to the maximum
+interpolated energy along the path. See Ref. 1 for details.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list of float</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.HistoryDMF.images_tmax">
+<span class="sig-name descname"><span class="pre">images_tmax</span></span><a class="headerlink" href="#dmf.dmf.HistoryDMF.images_tmax" title="Link to this definition"></a></dt>
+<dd><p>History of the atomic structure at <code class="docutils literal notranslate"><span class="pre">t</span> <span class="pre">=</span> <span class="pre">t_max</span></code>, providing an
+approximate transition-state geometry at each iteration.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list of ase.Atoms</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="dmf.dmf.HistoryDMF.duals">
+<span class="sig-name descname"><span class="pre">duals</span></span><a class="headerlink" href="#dmf.dmf.HistoryDMF.duals" title="Link to this definition"></a></dt>
+<dd><p>History of the scaled dual infeasibility (IPOPT diagnostic).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list of float</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="index.html" class="btn btn-neutral float-left" title="dmf: Direct MaxFlux and FB-ENM utilities" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="fbenm.html" class="btn btn-neutral float-right" title="FB-ENM Calculators" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Shin-ichi Koda.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
