@@ -26,6 +26,10 @@ jobs:
         run: |
           micromamba install -y -c conda-forge ase cyipopt pytest
 
+      - name: Install DMF
+        run: |
+          pip install -e .
+
       - name: Run tests
         run: |
           pytest -v
