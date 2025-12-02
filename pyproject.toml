@@ -18,6 +18,14 @@ dependencies = [
 
 [project.optional-dependencies]
 cyipopt = ["cyipopt>=1.4"]
+dev = ["pytest"]
+docs = [
+    "sphinx",
+    "sphinx_rtd_theme",
+    "sphinx-autodoc-typehints",
+    "ghp-import",
+]
+
 
 [project.urls]
 Homepage = "https://github.com/shin1koda/dmf"

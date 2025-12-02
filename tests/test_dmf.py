@@ -16,12 +16,14 @@ def test_interpolate_fbenm_basic():
 
     r = Atoms('HOH', positions=[[0, 0, -1], [0, 1, 0], [0, 0, 1]])
     p = Atoms('HOH', positions=[[0, 0.5, 0], [1, 0, 0], [0, -0.5, 0]])
-    mxflx = interpolate_fbenm([r, p], nmove=5, output_file="tests/fbenm_ipopt.out")
+    result = interpolate_fbenm([r, p], nmove=5, output_file="tests/fbenm_ipopt.out")
+
+    assert hasattr(result, "coefs")
 
     expected_coefs = np.load("tests/coefs.npy")
 
     assert_allclose(
-        mxflx.coefs,
+        result.coefs,
         expected_coefs,
         rtol=1e-5,
         atol=1e-8
