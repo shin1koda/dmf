@@ -13,25 +13,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Install conda (Mambaforge)
-      - name: Set up Mambaforge
-        uses: conda-incubator/setup-miniconda@v3
-        with:
-          auto-update-conda: true
-          activate-environment: dmf
-          python-version: "3.10"
-          environment-file: ""
-          channels: conda-forge
-          use-mamba: true
-
-      - name: Install conda dependencies
+      # Install Mambaforge (lightweight conda distribution with mamba)
+      - name: Install Mambaforge
         run: |
-          mamba install -c conda-forge ase cyipopt numpy pytest
+          wget https://github.com/conda-forge/miniforge/releases/latest/download/Mambaforge-Linux-x86_64.sh -O mambaforge.sh
+          bash mambaforge.sh -b -p $HOME/mambaforge
+          eval "$($HOME/mambaforge/bin/conda shell.bash hook)"
+          conda init bash
+
+      - name: Create environment
+        run: |
+          eval "$($HOME/mambaforge/bin/conda shell.bash hook)"
+          conda create -y -n dmf python=3.10
+
+      - name: Install dependencies
+        run: |
+          eval "$($HOME/mambaforge/bin/conda shell.bash hook)"
+          conda activate dmf
+          mamba install -y -c conda-forge ase cyipopt numpy pytest
 
       - name: Install DMF
         run: |
+          eval "$($HOME/mambaforge/bin/conda shell.bash hook)"
+          conda activate dmf
           pip install -e .
 
       - name: Run tests
-        run: pytest -v
+        run: |
+          eval "$($HOME/mambaforge/bin/conda shell.bash hook)"
+          conda activate dmf
+          pytest -v
 
