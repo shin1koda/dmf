@@ -1,5 +1,7 @@
 # Direct MaxFlux method
 
+![CI](https://github.com/shin1koda/dmf/actions/workflows/tests.yml/badge.svg)
+
 ## Overview
 
 This package provides a Python implementation of the direct MaxFlux (DMF) method and the flat-bottom elastic network model (FB-ENM). These tools offer a variational framework for reaction-path optimization and an efficient approach to generating physically plausible initial paths.
