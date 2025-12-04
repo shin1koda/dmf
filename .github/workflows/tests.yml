@@ -17,7 +17,7 @@ jobs:
         uses: mamba-org/setup-micromamba@v1
         with:
           micromamba-version: 'latest'
-          environment-name: dmf
+          environment-name: pydmf
           create-args: >-
             python=3.10
           cache-environment: true
@@ -26,7 +26,7 @@ jobs:
         run: |
           micromamba install -y -c conda-forge ase cyipopt pytest
 
-      - name: Install DMF
+      - name: Install PyDMF
         run: |
           pip install -e .
 

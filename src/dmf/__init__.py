@@ -1,5 +1,5 @@
 """
-dmf: Direct MaxFlux and FB-ENM utilities
+PyDMF: Direct MaxFlux and FB-ENM utilities
 ========================================
 
 This package provides an implementation of the Direct MaxFlux (DMF) method
@@ -43,7 +43,7 @@ try:
 except ImportError:
     raise ImportError(
         "\n"
-        "The 'dmf' package requires the 'cyipopt' library.\n"
+        "The PyDMF package requires the 'cyipopt' library.\n"
         "Please install cyipopt from conda-forge BEFORE installing dmf:\n\n"
         "    conda install -c conda-forge cyipopt \n\n"
     )

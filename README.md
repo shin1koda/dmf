@@ -1,4 +1,4 @@
-# Direct MaxFlux method
+# PyDMF: A Python package for double-ended reaction path/transition state optimization
 
 ![CI](https://github.com/shin1koda/dmf/actions/workflows/tests.yml/badge.svg)
 
@@ -24,24 +24,24 @@ The software is intended for researchers who use ASE-compatible calculators and 
 We generally recommend installing this package via **conda**, as `cyipopt` is most reliably installed through conda.
 
 ```bash
-conda create -n dmf python=3.10
-conda activate dmf
+conda create -n pydmf python=3.10
+conda activate pydmf
 conda install -c conda-forge ase cyipopt
-pip install git+https://github.com/shin1koda/dmf.git
+pip install pydmf
 ```
 
 If you prefer to install `cyipopt` without using conda, please follow its [official installation guide](https://cyipopt.readthedocs.io/en/stable/install.html).
-**After installing cyipopt**, you can install `dmf` via pip:
+**After installing cyipopt**, you can install PyDMF via pip:
 
 ```bash
-pip install git+https://github.com/shin1koda/dmf.git
+pip install pydmf
 ```
 
 
 ## Example usage
 
-`dmf` is used as part of an ASE script. For the basics of ASE, please refer to its [official documentation](https://ase-lib.org/gettingstarted/gettingstarted.html).
-An example script is provided in `sample/sample.py`:
+PyDMF is used as part of an ASE script. For the basics of ASE, please refer to its [official documentation](https://ase-lib.org/gettingstarted/gettingstarted.html).
+An example script is provided in `sample/sample.py` of [PyDMF GitHub repository](https://github.com/shin1koda/dmf):
 
 ```python
 import numpy as np
@@ -79,7 +79,8 @@ write('sample_tmax.traj',mxflx.history.images_tmax)
 You can run it simply by:
 
 ```bash
-cd sample
+git clone https://github.com/shin1koda/dmf
+cd dmf/sample
 python sample.py
 ```
 
@@ -136,5 +137,4 @@ We will do our best to provide guidance based on availability.
 ## License
 
 This project is distributed under the MIT License.
-See the `LICENSE` file for details.
 

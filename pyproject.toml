@@ -3,10 +3,11 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dmf"
+name = "pydmf"
 version = "1.0.0"
-description = "Module of direct MaxFlux method and flat-bottom elastic network model for reaction path/transition state optimization."
-readme = "README.md"
+description = "A Python package implementing the direct MaxFlux method and flat-bottom elastic network model for reaction path/transition state optimization."
+keywords = ["reaction path", "transition state", "DFT", "MaxFlux", "elastic network model", "chemistry", "optimization"]
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.8"
 license = { file = "LICENSE" }
 authors = [
@@ -15,10 +16,21 @@ authors = [
 dependencies = [
     "ase>=3.22",
 ]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Chemistry",
+]
+
 
 [project.optional-dependencies]
 cyipopt = ["cyipopt>=1.4"]
-dev = ["pytest"]
+dev = [
+    "pytest",
+    "build",
+    "twine",
+]
 docs = [
     "sphinx",
     "sphinx_rtd_theme",
