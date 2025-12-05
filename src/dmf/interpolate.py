@@ -13,6 +13,7 @@ def interpolate_fbenm(
         fbenm_options={},
         cfbenm_options={},
         dmf_options={},
+        ipopt_options={},
         ):
     """
     Generate a plausible initial reaction path using FB-ENM or
@@ -49,6 +50,8 @@ def interpolate_fbenm(
         Keyword arguments forwarded to `CFB_ENM`.
     dmf_options : dict, optional
         Keyword arguments forwarded to `DirectMaxFlux`.
+    ipopt_options : dict, optional
+        Keyword arguments forwarded to `DirectMaxFlux.add_ipopt_options()`.
 
     Returns
     -------
@@ -97,6 +100,8 @@ def interpolate_fbenm(
         }
     mxflx.add_ipopt_options(options)
 
+    if ipopt_options:
+        mxflx.add_ipopt_options(ipopt_options)
 
     if sequential:
         b_scale = 3.0
