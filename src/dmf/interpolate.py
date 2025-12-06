@@ -10,6 +10,7 @@ def interpolate_fbenm(
         correlated=True,
         sequential=True,
         fbenm_only_endpoints=True,
+        copy_calc0=True,
         fbenm_options={},
         cfbenm_options={},
         dmf_options={},
@@ -44,6 +45,10 @@ def interpolate_fbenm(
         If True, construct FB-ENM from only the first and last image.
         If False, use all ref_images for FB-ENM construction.
         Default: True.
+    copy_calc0 : bool, optional
+        If True, the calculator of images[0] is copied to the other images.
+        If False, independently initialize each calculator.
+        Default: True.
     fbenm_options : dict, optional
         Keyword arguments forwarded to `FB_ENM_Bonds`.
     cfbenm_options : dict, optional
@@ -77,13 +82,24 @@ def interpolate_fbenm(
     else:
         fbenm_images = [image.copy() for image in ref_images]
 
-    for i,image in enumerate(mxflx.images):
+    if copy_calc0:
+        calc_f = FB_ENM_Bonds(fbenm_images, **fbenm_options)
         if correlated:
-            image.calc = SumCalculator([
-                             FB_ENM_Bonds(fbenm_images, **fbenm_options),
-                             CFB_ENM(fbenm_images,**cfbenm_options)])
-        else:
-            image.calc = FB_ENM_Bonds(fbenm_images, **fbenm_options)
+            calc_c = CFB_ENM(fbenm_images,**cfbenm_options)
+        for image in mxflx.images:
+            if correlated:
+                image.calc = SumCalculator([calc_f.copy(),
+                                            calc_c.copy(fbenm_images)])
+            else:
+                image.calc = calc_f.copy()
+    else:
+        for i,image in enumerate(mxflx.images):
+            if correlated:
+                image.calc = SumCalculator([
+                                 FB_ENM_Bonds(fbenm_images, **fbenm_options),
+                                 CFB_ENM(fbenm_images,**cfbenm_options)])
+            else:
+                image.calc = FB_ENM_Bonds(fbenm_images, **fbenm_options)
 
     options ={
         'tol': 0.1,

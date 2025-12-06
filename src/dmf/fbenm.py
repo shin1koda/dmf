@@ -71,6 +71,12 @@ class FB_ENM(Calculator):
         self.delta_min[I] = 1.0
         self.delta_max[I] = 1.0
 
+    def copy(self):
+        return FB_ENM(self.d_min,
+                      self.d_max,
+                      delta_min=self.delta_min,
+                      delta_max=self.delta_max)
+
     def calculate(self, atoms, properties, system_changes):
         Calculator.calculate(self, atoms, properties, system_changes)
 
@@ -293,11 +299,13 @@ class CFB_ENM(Calculator):
 
     implemented_properties = ['energy', 'forces']
 
-    def __init__(self, images, bond_scale=1.25,
+    def __init__(self, images,
+                 d_bond=None, bond_scale=1.25,
                  d_corr0=None, corr0_scale=1.10,
                  d_corr1=None, corr1_scale=1.50,
                  d_corr2=None, corr2_scale=1.60,
                  eps=0.05,
+                 quartets=None,
                  pivotal=True,
                  single=True,
                  remove_fourmembered=True,
@@ -305,33 +313,41 @@ class CFB_ENM(Calculator):
 
         Calculator.__init__(self)
 
-        cov_radii = covalent_radii[images[0].arrays['numbers']]
-        r_cov = cov_radii + cov_radii[:,None]
-
         nimages = len(images)
         natoms = len(images[0])
 
-        d_bonds = np.zeros([nimages,natoms,natoms])
+        cov_radii = covalent_radii[images[0].arrays['numbers']]
+        r_cov = cov_radii + cov_radii[:,None]
 
-        Js = []
-        for i,image in enumerate(images):
-            d = image.get_all_distances()
-            J = (d/r_cov)<bond_scale
-            np.fill_diagonal(J,False)
-            Js.append(J)
 
-            d_bonds[i] = np.where(J,d,0.0)
+        if d_bond is None or quartets is None:
+            Js = []
+            for i,image in enumerate(images):
+                d = image.get_all_distances()
+                J = (d/r_cov)<bond_scale
+                np.fill_diagonal(J,False)
+                Js.append(J)
 
-        self.d_bond = np.max(d_bonds,axis=0)
+        if d_bond is not None:
+            self.d_bond = d_bond
+        else:
+            d_bonds = np.zeros([nimages,natoms,natoms])
+            for i,(image,J) in enumerate(zip(images,Js)):
+                d_bonds[i] = np.where(J,d,0.0)
 
-        J_only_r = Js[0]&(~Js[-1])
-        J_only_p = Js[-1]&(~Js[0])
-        J_both = Js[0]&Js[-1]
+            self.d_bond = np.max(d_bonds,axis=0)
 
-        self.quartets = self._get_quartets(
-                            J_only_r,J_only_p,J_both,
-                            pivotal=pivotal,single=single,
-                            remove_fourmembered=remove_fourmembered)
+        if quartets is not None:
+            self.quartets = quartets
+        else:
+            J_only_r = Js[0]&(~Js[-1])
+            J_only_p = Js[-1]&(~Js[0])
+            J_both = Js[0]&Js[-1]
+
+            self.quartets = self._get_quartets(
+                                J_only_r,J_only_p,J_both,
+                                pivotal=pivotal,single=single,
+                                remove_fourmembered=remove_fourmembered)
 
         if d_corr0 is not None:
             self.d_corr0 = d_corr0
@@ -355,6 +371,15 @@ class CFB_ENM(Calculator):
         self.d_corr0[I] = 0.0
         self.d_corr1[I] = 0.0
         self.d_corr2[I] = 0.0
+
+    def copy(self,images):
+        return type(self)(images,
+                          d_bond=self.d_bond,
+                          d_corr0=self.d_corr0,
+                          d_corr1=self.d_corr1,
+                          d_corr2=self.d_corr2,
+                          eps=self.eps,
+                          quartets=self.quartets)
 
     def _get_quartets(self,J_only_r,J_only_p,J_both,
             pivotal=True,single=True,remove_fourmembered=True):
