@@ -91,6 +91,32 @@ Running the script produces several output files, including:
  - `sample_tmax.traj`: History of the estimated highest-energy point during optimization
 
 
+## torch_dmf (GPU acceleration)
+
+`torch_dmf` is a PyTorch-accelerated backend that mirrors the `dmf` API while offloading internal tensor operations to PyTorch (CUDA when available).
+
+If you want to use `torch_dmf`, install a CUDA-matched build of PyTorch before installing PyDMF.  
+Example for CUDA 12.9:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu129
+pip install pydmf
+```
+
+To use the PyTorch backend, replace `dmf` with `torch_dmf` in your imports. The rest of the API is unchanged:   
+
+```python
+from torch_dmf import DirectMaxFlux, interpolate_fbenm
+```
+
+You can optionally specify the CUDA device in entry points such as `DirectMaxFlux` and `interpolate_fbenm`:
+
+```python
+mxflx = DirectMaxFlux(ref_images, coefs=coefs, nmove=3, device="cuda")
+mxflx_fbenm = interpolate_fbenm(ref_images, correlated=True, device="cuda")
+```
+
+
 ## Documentation
 
 For more details, please refer to the [API documentation](https://shin1koda.github.io/dmf/).

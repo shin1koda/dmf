@@ -37,6 +37,7 @@ docs = [
     "sphinx-autodoc-typehints",
     "ghp-import",
 ]
+gpu = ["torch>=2.6.0"]
 
 
 [project.urls]
