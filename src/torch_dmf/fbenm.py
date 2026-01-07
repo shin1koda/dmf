@@ -185,7 +185,7 @@ class FB_ENM_Bonds(FB_ENM):
     d_min_overwrite, d_max_overwrite : np.ndarray, optional
         Overwrite subsets with `A_overwrite` mask.
     A_overwrite : np.ndarray[bool], optional
-    two_hop_mode : {"dense","sparse"}, default "sparse"
+    two_hop_mode : {"dense","sparse"}, default "dense"
         Build 2-hop connectivity A=(J @ J)>0 densely or via sparse CSR mm.
 
     Optional
@@ -206,7 +206,7 @@ class FB_ENM_Bonds(FB_ENM):
         d_min_overwrite: Optional[np.ndarray] = None,
         d_max_overwrite: Optional[np.ndarray] = None,
         A_overwrite: Optional[np.ndarray] = None,
-        two_hop_mode: str = "sparse",
+        two_hop_mode: str = "dense",
         device=None,
     ):
         self.device = _resolve_torch_device(device)
