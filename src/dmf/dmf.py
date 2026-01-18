@@ -130,8 +130,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         Default: False.
 
     world : MPI communicator, optional
-        Communicator used when ``parallel=True``. Defaults to
-        ``ase.parallel.world``.
+        Communicator used when ``parallel=True``. Default: None.
 
     t_eval : ndarray, optional
         Energy evaluation points in \( t \in [0,1] \).  
@@ -257,9 +256,10 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         #Prallel calculation
         self.parallel = parallel
 
-        if parallel == "mpi":
+        if parallel and (parallel == "mpi" or world is not None):
+            self.parallel = "mpi"
             if not HAS_MPI4PY:
-                raise RuntimeError("parallel='mpi' requires mpi4py.")
+                raise RuntimeError("MPI parallel calculation requires mpi4py.")
 
             self._world = MPI.COMM_WORLD if world is None else world
             self._rank = self._world.Get_rank()
@@ -811,7 +811,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
     def _get_forces_by_img_idxs(self,idxs,energies,forces):
 
-        if self.parallel == 'thread':
+        if self.parallel and self._world is None:
 
             def run(image, energies, forces):
                 forces[:] = image.get_forces()
@@ -885,107 +885,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
     def stop_mpi(self):
         for r in range(1, self._size):
             self._world.send(("STOP", None), dest=r)
-            #cmd, payload = self._world.recv(source=r)
-            #assert cmd == "STOPPED"
 
-    def get_forces_old(self):
-        """
-        Evaluate forces and energies for all images along the path.
-
-        For each image at ``t = t_eval[i]``, this method computes the atomic
-        forces and potential energy using the calculator attached to the
-        corresponding ``ase.Atoms`` object.  Forces and energies at the
-        endpoints are obtained from cached values (``_f_ends`` and ``_e_ends``)
-        with a small tolerance region near ``t = 0`` and ``t = 1``.  Interior
-        images are evaluated serially, using threads, or using MPI depending
-        on the settings of ``parallel`` and ``world``.
-
-        After calling this method, the arrays ``self.forces`` and
-        ``self.energies`` are updated in place.
-
-        Returns
-        -------
-        ndarray
-            Array of shape ``(len(t_eval), natoms, 3)`` containing the forces
-            for all images along the current path.
-
-        Notes
-        -----
-        - Endpoint forces are stored in ``_f_ends`` and are reused for
-          ``t < eps_t`` and ``t > 1 - eps_t``.
-
-        - If ``remove_rotation_and_translation`` is enabled, forces at the
-          final endpoint are rotated to match the aligned coordinate frame.
-
-        - When MPI is used, each rank evaluates a subset of interior images;
-          results are broadcast so that all ranks obtain full arrays.
-
-        """
-        eps_t=0.01
-        eps_w=0.001
-
-        forces = np.empty([self.t_eval.size, self.natoms, 3])
-        energies = np.empty(self.t_eval.size)
-        e0 = self.e0
-
-        idxs=[]
-        for i in range(self.t_eval.size):
-            if self.t_eval[i]<eps_t:
-                forces[i] = self._f_ends[0]
-                energies[i] = self._e_ends[0]
-            elif self.t_eval[i]>1.0-eps_t:
-                R=self._get_rot_mats()
-                f = self._f_ends[1]
-                forces[i] = f@R[0]@R[1]@R[2]
-                energies[i] = self._e_ends[1]
-            else:
-                idxs.append(i)
-
-        if not self.parallel:
-            for i in idxs:
-                forces[i] = self.images[i].get_forces()
-                energies[i] = self.images[i].get_potential_energy()
-
-        elif self._world.size==1:
-            def run(image, energies, forces):
-                forces[:] = image.get_forces()
-                energies[:] = image.get_potential_energy()
-
-            threads = [threading.Thread(target=run,
-                                        args=(self.images[i],
-                                              energies[i:i+1],
-                                              forces[i:i+1]))
-                       for i in idxs]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join()
-
-        else:
-            nmv = len(self.images)-2
-            i = self._world.rank * nmv // self._world.size + 1
-            try:
-                forces[i] = self.images[i].get_forces()
-                energies[i] = self.images[i].get_potential_energy()
-            except Exception:
-                error = self._world.sum(1.0)
-                raise
-            else:
-                error = self._world.sum(0.0)
-                if error:
-                    raise RuntimeError('Parallel DMF failed!')
-
-            for i in range(1,nmv+1):
-                root = (i-1) * self._world.size // nmv
-                self._world.broadcast(energies[i:i + 1], root)
-                self._world.broadcast(forces[i], root)
-
-
-        self.energies = energies
-        self.forces = forces
-
-
-        return forces
 
     @abstractmethod
     def _get_objective(self):
@@ -1646,8 +1546,7 @@ class DirectMaxFlux(VariationalPathOpt):
         Default: False.
 
     world : MPI communicator, optional
-        Communicator used when ``parallel=True``. Defaults to
-        ``ase.parallel.world``.
+        Communicator used when ``parallel=True``. Default: None.
 
     t_eval : ndarray of shape ``(nmove+2,)``, optional
         **Initial** evaluation points in \( t \in [0,1] \).  
