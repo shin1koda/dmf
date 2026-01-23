@@ -1788,7 +1788,10 @@ class DirectMaxFlux(VariationalPathOpt):
 
             alpha = ca*self._max_alpha
             t_eval = self.t_eval.copy()
-            t_eval[1:-1] = (1.0-alpha)*t_eval[1:-1] + alpha*temp_t_eval
+            if temp_t_eval.size == t_eval[1:-1].size:
+                t_eval[1:-1] = (1.0-alpha)*t_eval[1:-1] + alpha*temp_t_eval
+                self.set_t_eval(t_eval)
+                self.set_w_eval()
 
             self.set_t_eval(t_eval)
             self.set_w_eval()
