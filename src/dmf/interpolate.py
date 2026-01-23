@@ -1,5 +1,6 @@
 import numpy as np
 from ase.calculators.mixing import SumCalculator
+from constraints import add_harmonic_constraints
 from .dmf import DirectMaxFlux
 from .fbenm import FB_ENM_Bonds, CFB_ENM
 
@@ -76,11 +77,18 @@ def interpolate_fbenm(
 
     for i,image in enumerate(mxflx.images):
         if correlated:
-            image.calc = SumCalculator([
-                             FB_ENM_Bonds(fbenm_images, **fbenm_options),
-                             CFB_ENM(fbenm_images,**cfbenm_options)])
+            calcs = [
+                FB_ENM_Bonds(fbenm_images, **fbenm_options),
+                CFB_ENM(fbenm_images, **cfbenm_options),
+            ]
         else:
-            image.calc = FB_ENM_Bonds(fbenm_images, **fbenm_options)
+            calcs = [FB_ENM_Bonds(fbenm_images, **fbenm_options)]
+
+        calcs = add_harmonic_constraints(image, calcs)
+        if len(calcs) == 1:
+            image.calc = calcs[0]
+        else:
+            image.calc = SumCalculator(calcs)
 
     options ={
         'tol': 0.1,

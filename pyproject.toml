@@ -47,9 +47,9 @@ Issues = "https://github.com/shin1koda/dmf/issues"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+py-modules = ["constraints"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["dmf*"]
 exclude = ["tests"]
-

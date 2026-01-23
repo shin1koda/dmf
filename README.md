@@ -100,7 +100,7 @@ Example for CUDA 12.9:
 
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cu129
-pip install pydmf
+pip install git+https://github.com/t-0hmura/dmf.git
 ```
 
 To use the PyTorch backend, replace `dmf` with `torch_dmf` in your imports. The rest of the API is unchanged:   
