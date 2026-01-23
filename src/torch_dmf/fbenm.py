@@ -466,11 +466,11 @@ class CFB_ENM(Calculator):
             pivotal=True,single=True,remove_fourmembered=True):
 
         if isinstance(J_both,torch.Tensor):
-            J2 = (J_both.to(torch.int32)@J_both.to(torch.int32))>0
-            J2 = J2.cpu().numpy()
+            J_both_t = J_both.to(dtype=torch.float32)
         else:
-            J_both_t = torch.as_tensor(J_both,dtype=torch.bool,device=self.device)
-            J2 = ((J_both_t.to(torch.int32)@J_both_t.to(torch.int32))>0).cpu().numpy()
+            J_both_t = torch.as_tensor(J_both,dtype=torch.float32,device=self.device)
+        J2 = (J_both_t @ J_both_t) > 0
+        J2 = J2.cpu().numpy()
 
         J_only_r = J_only_r.cpu().numpy() if isinstance(J_only_r,torch.Tensor) else np.asarray(J_only_r,bool)
         J_only_p = J_only_p.cpu().numpy() if isinstance(J_only_p,torch.Tensor) else np.asarray(J_only_p,bool)
