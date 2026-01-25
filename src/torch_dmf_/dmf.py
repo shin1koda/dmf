@@ -1,5 +1,6 @@
 import threading
 from abc import ABC, abstractmethod
+from typing import Optional
 
 import numpy as np
 from numpy.polynomial import polynomial as P
@@ -9,6 +10,44 @@ import cyipopt
 
 import ase.parallel
 from functools import cached_property
+
+import torch
+import warnings
+
+
+def _resolve_torch_device(device_spec):
+    """
+    Resolve a torch device from a user spec.
+    """
+    if device_spec is None:
+        d = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        try:
+            d = torch.device(device_spec)
+        except (TypeError, ValueError):
+            warnings.warn(f"[torch_dmf] Invalid device spec '{device_spec}', falling back to CPU.")
+            d = torch.device("cpu")
+    if d.type == "cuda" and not torch.cuda.is_available():
+        warnings.warn("[torch_dmf] CUDA requested but not available; falling back to CPU.")
+        d = torch.device("cpu")
+    return d
+
+
+@torch.no_grad()
+def _interp1d_torch(xq: torch.Tensor, xp: torch.Tensor, fp: torch.Tensor) -> torch.Tensor:
+    """
+    Linear interpolate fp(xp) at xq using pure PyTorch.
+
+    xp: (M,), fp: (M, *), xq: (K,)
+    Returns: (K, *) broadcast along the trailing dims of fp.
+    """
+    idx = torch.searchsorted(xp,xq,right=False).clamp(1,xp.numel()-1)
+    x0, x1 = xp[idx-1], xp[idx]
+    lam = (xq-x0)/(x1-x0)
+    while lam.dim() < fp.dim():
+        lam = lam.unsqueeze(-1)
+    f0, f1 = fp[idx-1], fp[idx]
+    return f0 + (f1-f0)*lam
 
 
 class HistoryBase():
@@ -158,6 +197,9 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
     eps_rot : float, optional
         Tolerance for rotational constraints. Default: 0.01.
 
+    device : str or torch.device, optional
+        Torch device for internal tensors. If None, auto-select.
+
 
     Attributes
     ----------
@@ -244,12 +286,14 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         t_eval=None,w_eval=None,
         n_vel=None,n_trans=None,n_rot=None,
         eps_vel=0.01,eps_rot=0.01,
+        device=None,
         ):
+        self.device = _resolve_torch_device(device)
 
         #Atoms
         self.natoms = len(ref_images[0])
         if mass_weighted:
-            self._masses = ref_images[0].get_masses()
+            self._masses = ref_images[0].get_masses().astype(np.float64)
         else:
             self._masses = np.ones(self.natoms)
         self._mass_fracs = self._masses/np.sum(self._masses)
@@ -261,27 +305,29 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         if has_constraints:
             remove_rotation_and_translation = False
         self.remove_rotation_and_translation = remove_rotation_and_translation
-        self.eps_vel = eps_vel
-        self.eps_rot = eps_rot
+        self.eps_vel = float(eps_vel)
+        self.eps_rot = float(eps_rot)
 
         #Prallel calculation
-        self.parallel = parallel
+        self.parallel = bool(parallel)
 
         if world is None:
             world = ase.parallel.world
         self._world = world
+        if self._world.size == 1:
+            self.parallel = False
 
         #B-spline basis functions
-        self.nsegs = nsegs
-        self.dspl = dspl
-        self.nbasis = nsegs + dspl
+        self.nsegs = int(nsegs)
+        self.dspl = int(dspl)
+        self.nbasis = self.nsegs + self.dspl
         _t_knot = np.concatenate([
-            np.zeros(dspl),
-            np.linspace(0.0,1.0,nsegs+1),
-            np.ones(dspl)])
+            np.zeros(self.dspl),
+            np.linspace(0.0,1.0,self.nsegs+1),
+            np.ones(self.dspl)])
         self._t_knot = _t_knot
         basis = [
-            BSpline(_t_knot, np.identity(self.nbasis)[i], dspl)
+            BSpline(_t_knot, np.identity(self.nbasis)[i], self.dspl)
             for i in range(self.nbasis)]
         d1basis = [b.derivative(nu=1) for b in basis]
         d2basis = [b.derivative(nu=2) for b in basis]
@@ -289,28 +335,28 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
         #t-sequences
         if t_eval is None:
-            self.set_t_eval(np.linspace(0.0,1.0,2*nsegs+1))
+            self.set_t_eval(np.linspace(0.0,1.0,2*self.nsegs+1))
         else:
-            self.set_t_eval(t_eval)
+            self.set_t_eval(np.asarray(t_eval))
 
         self.set_w_eval(w_eval)
 
         if n_vel is None:
-            self.n_vel = 4*nsegs
+            self.n_vel = 4*self.nsegs
         else:
-            self.n_vel = n_vel
+            self.n_vel = int(n_vel)
         self.t_vel = np.linspace(0.0,1.0,self.n_vel+1)
 
         if n_trans is None:
-            self.n_trans = 2*nsegs
+            self.n_trans = 2*self.nsegs
         else:
-            self.n_trans = n_trans
+            self.n_trans = int(n_trans)
         self.t_trans = np.linspace(0.0,1.0,self.n_trans+1)[1:-1]
 
         if n_rot is None:
-            self.n_rot = 2*nsegs
+            self.n_rot = 2*self.nsegs
         else:
-            self.n_rot = n_rot
+            self.n_rot = int(n_rot)
         self.t_rot = np.linspace(0.0,1.0,self.n_rot+1)
 
         #Basis values: [derivative order, basis, t]
@@ -323,10 +369,19 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         self.coefs = np.empty([self.nbasis, self.natoms, 3])
         self.angs = np.zeros(3)
         if coefs is not None:
-            self.coefs = coefs
+            self.coefs[...] = coefs
         else:
-            self.coefs = self._get_coefs_from_ref_images(ref_images)
+            self.coefs[...] = self._get_coefs_from_ref_images(ref_images)
         self._coefs0 = self.coefs.copy()
+
+        # torch mirrors
+        self._masses_t = torch.as_tensor(self._masses,dtype=torch.float64,device=self.device)
+        self._mass_fracs_t = torch.as_tensor(self._mass_fracs,dtype=torch.float64,device=self.device)
+        self._P_eval_t = torch.as_tensor(self._P_eval,dtype=torch.float64,device=self.device)
+        self._P_vel_t = torch.as_tensor(self._P_vel,dtype=torch.float64,device=self.device)
+        self._P_trans_t = torch.as_tensor(self._P_trans,dtype=torch.float64,device=self.device)
+        self._P_rot_t = torch.as_tensor(self._P_rot,dtype=torch.float64,device=self.device)
+        self.coefs_t = torch.as_tensor(self.coefs,dtype=torch.float64,device=self.device)
 
         #Initialize images
         self.images=[]
@@ -395,7 +450,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         self.add_ipopt_options(defaults)
 
 
-    def _get_basis_values(self,t_seq):
+    def _get_basis_values(self, t_seq: np.ndarray) -> np.ndarray:
         return np.array([[[
             b(t) for t in t_seq]
             for b in self._basis[nu]]
@@ -416,10 +471,11 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             at initialization, because the number of images is fixed.
 
         """
-        self.t_eval = t_eval
+        self.t_eval = np.asarray(t_eval)
         self._P_eval = self._get_basis_values(self.t_eval)
+        self._P_eval_t = torch.as_tensor(self._P_eval,dtype=torch.float64,device=self.device)
 
-    def set_w_eval(self, w_eval=None):
+    def set_w_eval(self, w_eval: Optional[np.ndarray] = None):
         """
         Set the quadrature weights ``w_eval`` used in the action integral.
 
@@ -445,7 +501,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             w[1:-1] = 0.5*(self.t_eval[2:]-self.t_eval[:-2])
             self.w_eval = w
 
-    def _get_coefs_from_ref_images(self,ref_images):
+    def _get_coefs_from_ref_images(self, ref_images) -> np.ndarray:
         ref_images_copy = [image.copy() for image in ref_images]
         #Translate and rotate ref_images
         if self.remove_rotation_and_translation:
@@ -465,15 +521,18 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         pos_ref = np.empty([nimages, self.natoms, 3])
         t_ref = np.zeros(nimages)
         for i,image in enumerate(ref_images_copy):
-            pos_ref[i] = image.get_positions()
+            pos_ref[i] = image.get_positions().astype(np.float64)
         diff = pos_ref[1:] - pos_ref[:-1]
         l = np.sqrt(
             (self._masses[None,:,None]*diff**2).sum(axis=(1,2)))
         t_ref[1:] = np.cumsum(l)/np.sum(l)
 
-        f = interp1d(t_ref,pos_ref,axis=0)
         t_ref_interp = np.linspace(0.0,1.0,4*self.nsegs+1)[1:-1]
-        pos_ref_interp = f(t_ref_interp)
+        pos_ref_interp = _interp1d_torch(
+            torch.as_tensor(t_ref_interp,dtype=torch.float64,device=self.device),
+            torch.as_tensor(t_ref,dtype=torch.float64,device=self.device),
+            torch.as_tensor(pos_ref,dtype=torch.float64,device=self.device)
+            ).cpu().numpy()
         P_ref_interp0 = self._get_basis_values(t_ref_interp)[0]
 
         #Solving least-square equations
@@ -490,7 +549,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
         return coefs
 
-    def get_positions(self,t=None,P=None,nu=0):
+    def get_positions(self, t=None, P=None, nu=0) -> np.ndarray:
         """
         Evaluate the positions (or their derivatives) along the path.
 
@@ -559,12 +618,17 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         """        
         if coefs is not None:
             self.coefs=coefs
+            self.coefs_t = torch.as_tensor(self.coefs,dtype=torch.float64,device=self.device)
         if angs is not None:
             self.angs = angs
         R=self._get_rot_mats()
         self.coefs[-1]=self._coefs0[-1]@R[0]@R[1]@R[2]
+        self.coefs_t[-1].copy_(torch.as_tensor(self.coefs[-1],dtype=torch.float64,device=self.device))
 
-    def _get_rot_mats(self):
+    def _get_positions_torch(self, P_t: torch.Tensor, nu=0) -> torch.Tensor:
+        return torch.tensordot(P_t[nu].T.contiguous(),self.coefs_t,1)
+
+    def _get_rot_mats(self) -> np.ndarray:
         R=np.zeros([3,3,3])
         for i in range(3):
             j=(i+1)%3
@@ -605,18 +669,18 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         for i in range(self.t_eval.size):
             self.images[i].set_positions(pos[i])
 
-    def _get_consts_trans(self):
+    def _get_consts_trans(self) -> np.ndarray:
         pos = self.get_positions(P=self._P_trans)
         return self._mass_fracs@pos
 
-    def _get_jac_trans(self):
+    def _get_jac_trans(self) -> np.ndarray:
         return self._jac_trans
 
-    def _get_consts_rot(self):
+    def _get_consts_rot(self) -> np.ndarray:
         pos = self.get_positions(P=self._P_rot)
         return self._mass_fracs@np.cross(pos[:-1],pos[1:])
 
-    def _get_jac_rot(self):
+    def _get_jac_rot(self) -> np.ndarray:
         pos = self.get_positions(P=self._P_rot)
         y = np.cross(np.identity(3),pos[...,None,:])
         jac_rot = \
@@ -632,25 +696,26 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
                 y[:-1])
         return jac_rot
 
-    def _get_consts_vel(self):
-        pos = self.get_positions(P=self._P_vel)
-        diffs = pos[1:]-pos[:-1]
-        d2s = (self._masses[None,:,None]*diffs**2).sum(axis=(1,2))
-        return d2s/np.average(d2s)
+    def _get_consts_vel(self) -> np.ndarray:
+        pos_t = self._get_positions_torch(self._P_vel_t)
+        diffs = pos_t[1:]-pos_t[:-1]
+        d2s = torch.sum(self._masses_t[None,:,None]*diffs**2,dim=(1,2))
+        return (d2s/torch.mean(d2s)).cpu().numpy()
 
-    def _get_jac_vel(self):
-        pos = self.get_positions(P=self._P_vel)
-        diffs = pos[1:]-pos[:-1]
-        d2s = (self._masses[None,:,None]*diffs**2).sum(axis=(1,2))
-        diff_P = self._P_vel[0,:,1:]-self._P_vel[0,:,:-1]
-        jac_d2s = 2.0*np.einsum(
+    def _get_jac_vel(self) -> np.ndarray:
+        pos_t = self._get_positions_torch(self._P_vel_t)
+        diffs = pos_t[1:]-pos_t[:-1]
+        d2s = torch.sum(self._masses_t[None,:,None]*diffs**2,dim=(1,2))
+        diff_P = self._P_vel_t[0,:,1:]-self._P_vel_t[0,:,:-1]
+        jac_d2s = 2.0*torch.einsum(
             'a,bi,ias->ibas',
-            self._masses,diff_P,diffs)
-        ave_d2s = np.average(d2s)
-        return jac_d2s/ave_d2s \
-            - np.tensordot(d2s,np.average(jac_d2s,axis=0),0)/(ave_d2s)**2
+            self._masses_t,diff_P,diffs)
+        ave_d2s = torch.mean(d2s)
+        return (jac_d2s/ave_d2s \
+            - torch.tensordot(d2s,torch.mean(jac_d2s,dim=0),0)/(ave_d2s)**2
+            ).cpu().numpy()
 
-    def _get_jac_fin_rot(self):
+    def _get_jac_fin_rot(self) -> np.ndarray:
         R=self._get_rot_mats()
 
         dR=np.zeros([3,3,3])
@@ -693,7 +758,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             return remove_axis(jac_coefs)
 
     def _reshape_consts(self,consts):
-        return np.hstack([np.ravel(c) for c in consts])
+        return np.hstack([np.ravel(c) for c in consts]).astype(np.float64)
 
     @cached_property
     def _f_ends(self):
@@ -759,14 +824,14 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
 
     @cached_property
-    def e0(self):
+    def e0(self) -> float:
         """
         float:
             Minimum endpoint energy used to shift the energy scale.
         """
-        return np.amin(self._e_ends)
+        return float(np.amin(self._e_ends))
 
-    def get_forces(self):
+    def get_forces(self) -> np.ndarray:
         """
         Evaluate forces and energies for all images along the path.
 
@@ -867,7 +932,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         return forces
 
     @abstractmethod
-    def _get_objective(self):
+    def _get_objective(self) -> float:
         """
         Compute the objective value K(I).
 
@@ -901,7 +966,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         pass
 
     @abstractmethod
-    def _get_grad_objective(self):
+    def _get_grad_objective(self) -> np.ndarray:
         """
         Compute the derivative of K(I) with respect to ``coefs``.
 
@@ -929,7 +994,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         pass
 
     @abstractmethod
-    def _get_func_en(self, en):
+    def _get_func_en(self, en: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         Evaluate the energy-dependent function F(E) and its derivative dF/dE.
 
@@ -967,44 +1032,54 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         pass
 
 
+    @torch.no_grad()
     def _get_norm_vels(self,nu=0):
-        pos = self.get_positions(P=self._P_vel)
-        diffs = pos[1:]-pos[:-1]
+        pos_t = self._get_positions_torch(self._P_vel_t)
+        diffs = pos_t[1:]-pos_t[:-1]
 
-        norm_dx = np.sqrt(
-            np.sum(self._masses[None,:,None]*diffs**2,axis=(1,2)))
-        dt = self.t_vel[1:]-self.t_vel[:-1]
+        norm_dx = torch.sqrt(
+            torch.sum(self._masses_t[None,:,None]*diffs**2,dim=(1,2)))
+        dt = torch.as_tensor(
+            self.t_vel[1:]-self.t_vel[:-1],dtype=torch.float64,device=self.device)
 
-        t_fd_vel = np.zeros(self.t_vel.size+1)
-        t_fd_vel[1:-1] = 0.5*(self.t_vel[1:]+self.t_vel[:-1])
-        t_fd_vel[-1] = 1.0
+        t_fd_vel = torch.zeros(self.t_vel.size+1,dtype=torch.float64,device=self.device)
+        t_fd_vel[1:-1] = 0.5*(
+            torch.as_tensor(self.t_vel[1:],dtype=torch.float64,device=self.device)
+            + torch.as_tensor(self.t_vel[:-1],dtype=torch.float64,device=self.device))
+        t_fd_vel[-1] = torch.tensor(1.0,dtype=torch.float64,device=self.device)
 
         if nu==0:
-            fd_vels = np.zeros(self.t_vel.size + 1)
+            fd_vels = torch.zeros(self.t_vel.size + 1,dtype=torch.float64,device=self.device)
             fd_vels[1:-1] = norm_dx/dt
             fd_vels[0] = fd_vels[1]
             fd_vels[-1] = fd_vels[-2]
 
-            f = interp1d(t_fd_vel,fd_vels)
-            return f(self.t_eval)
+            del pos_t, diffs, norm_dx, dt; torch.cuda.empty_cache()
+            return _interp1d_torch(
+                torch.as_tensor(self.t_eval,dtype=torch.float64,device=self.device),
+                t_fd_vel,fd_vels).cpu().numpy()
         else:
-            diff_P_vel0 = self._P_vel[0,:,1:]-self._P_vel[0,:,:-1]
-            grad_norm_vel = np.einsum(
+            diff_P_vel0 = self._P_vel_t[0,:,1:]-self._P_vel_t[0,:,:-1]
+            grad_norm_vel = torch.einsum(
                 'i,bi,a,ias->ibas',
                 1.0/(dt*norm_dx),
                 diff_P_vel0,
-                self._masses,
+                self._masses_t,
                 diffs)
-            grad_fd_vels = np.zeros(
-                [self.t_vel.size+1,self.nbasis,self.natoms,3])
+            grad_fd_vels = torch.zeros(
+                [self.t_vel.size+1,self.nbasis,self.natoms,3],
+                dtype=torch.float64,device=self.device)
             grad_fd_vels[1:-1] = grad_norm_vel
             grad_fd_vels[0] = grad_norm_vel[0]
             grad_fd_vels[-1] = grad_norm_vel[-1]
 
-            f = interp1d(t_fd_vel,grad_fd_vels,axis=0)
-            return f(self.t_eval)
+            del pos_t, diffs, norm_dx, dt, diff_P_vel0, grad_norm_vel; torch.cuda.empty_cache()
+            return _interp1d_torch(
+                torch.as_tensor(self.t_eval,dtype=torch.float64,device=self.device),
+                t_fd_vel,grad_fd_vels).cpu().numpy()
 
-    def _get_action(self):
+    @torch.no_grad()
+    def _get_action(self) -> float:
 
         self.set_positions()
         self.get_forces()
@@ -1013,9 +1088,11 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         fe,dfe = self._get_func_en(self.energies)
         action = np.sum(self.w_eval*norm_vels*fe)
 
+        del norm_vels, fe, dfe; torch.cuda.empty_cache()
         return action
 
-    def _get_grad_action(self):
+    @torch.no_grad()
+    def _get_grad_action(self) -> np.ndarray:
 
         self.set_positions()
         self.get_forces()
@@ -1029,6 +1106,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
                 self._P_eval[0]*self.w_eval*norm_vels*dfe,
                 self.forces,1)
 
+        del fe, dfe, norm_vels, grad_norm_vels; torch.cuda.empty_cache()
         return grad_action
     
 
@@ -1244,7 +1322,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             self.add_option(*item)
 
 
-    def get_x(self):
+    def get_x(self) -> np.ndarray:
         """
         Return the flattened optimization variable vector used by IPOPT.
 
@@ -1303,7 +1381,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         self.set_positions(coefs, angs)
 
 
-    def objective(self, x):
+    def objective(self, x: np.ndarray) -> float:
         """
         IPOPT callback: objective function.
 
@@ -1315,7 +1393,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         self.set_x(x)
         return self._get_objective()
 
-    def gradient(self, x):
+    def gradient(self, x: np.ndarray) -> np.ndarray:
         """
         IPOPT callback: gradient of the objective.
 
@@ -1329,7 +1407,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             [self._get_grad_objective()])
         return grad*self.var_scales
 
-    def constraints(self, x):
+    def constraints(self, x: np.ndarray) -> np.ndarray:
         """
         IPOPT callback: nonlinear constraint values.
 
@@ -1345,7 +1423,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             c_list.append(self._get_consts_rot())
         return self._reshape_consts(c_list)
 
-    def jacobian(self, x):
+    def jacobian(self, x: np.ndarray) -> np.ndarray:
         """
         IPOPT callback: Jacobian of the constraints.
 
@@ -1578,6 +1656,9 @@ class DirectMaxFlux(VariationalPathOpt):
         Includes keys such as ``max_alpha0``, ``de``, ``dia``, ``mua``,
         ``dib``, ``mub``, ``epsb`` (Defaults are the same as in Ref. 1).
 
+    device : str or torch.device, optional
+        Torch device for internal tensors. If None, auto-select.
+
 
     Attributes
     ----------
@@ -1670,20 +1751,22 @@ class DirectMaxFlux(VariationalPathOpt):
     def __init__(
         self,
         ref_images,
-        coefs=None, nsegs=4,dspl=3,
-        remove_rotation_and_translation=True,
-        mass_weighted=False,
-        parallel=False,world=None,
-        t_eval=None,w_eval=None,
-        n_vel=None,n_trans=None,n_rot=None,
-        eps_vel=0.01,eps_rot=0.01,
-        beta = 10.0,
-        nmove = 5,
-        update_teval = False,
-        params_t_update = {
-            'max_alpha0':0.1,'de':0.15,
-            'dia':1.0,'mua':5.0,
-            'dib':0.2,'mub':5.0,'epsb':0.02,},
+        coefs=None, nsegs: int = 4, dspl: int = 3,
+        remove_rotation_and_translation: bool = True,
+        mass_weighted: bool = False,
+        parallel: bool = False, world=None,
+        t_eval: Optional[np.ndarray] = None,
+        w_eval: Optional[np.ndarray] = None,
+        n_vel: Optional[int] = None,
+        n_trans: Optional[int] = None,
+        n_rot: Optional[int] = None,
+        eps_vel: float = 0.01,
+        eps_rot: float = 0.01,
+        beta: float = 10.0,
+        nmove: int = 5,
+        update_teval: bool = False,
+        params_t_update: Optional[dict] = None,
+        device=None,
         ):
 
         args = locals()
@@ -1691,16 +1774,30 @@ class DirectMaxFlux(VariationalPathOpt):
             'ref_images','coefs','nsegs','dspl',
             'remove_rotation_and_translation','mass_weighted',
             'parallel','world','t_eval','w_eval','n_vel',
-            'n_trans','n_rot','eps_vel','eps_rot']
+            'n_trans','n_rot','eps_vel','eps_rot','device']
         base_args = {k:args[k] for k in base_params}
 
-        self.beta = beta
-        self.params_t_update = params_t_update
-        self._max_alpha = params_t_update['max_alpha0']
+        if params_t_update is None:
+            params_t_update = {}
+        params_defaults = {
+            'max_alpha0': 0.1,
+            'de': 0.15,
+            'dia': 1.0,
+            'mua': 5.0,
+            'dib': 0.2,
+            'mub': 5.0,
+            'epsb': 0.02,
+        }
+        for key, value in params_defaults.items():
+            params_t_update.setdefault(key, value)
 
-        self.update_teval = update_teval
+        self.beta: float = float(beta)
+        self.params_t_update: dict = params_t_update
+        self._max_alpha: float = params_t_update['max_alpha0']
 
-        self.nmove = nmove
+        self.update_teval: bool = bool(update_teval)
+
+        self.nmove: int = int(nmove)
 
         base_args.update(t_eval=np.linspace(0.0,1.0,nmove+2))
 
@@ -1756,7 +1853,7 @@ class DirectMaxFlux(VariationalPathOpt):
                      alpha_du, alpha_pr, ls_trials)
 
         if self.update_teval:
-            self.history.t_eval.append(self.t_eval)
+            self.history.t_eval.append(self.t_eval.copy())
 
             polys,tmax,emax_interp = self.interpolate_energies()
 

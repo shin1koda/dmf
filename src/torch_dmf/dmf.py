@@ -150,7 +150,8 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
     remove_rotation_and_translation : bool, optional
         If True, remove global translational and rotational motion using
-        nonlinear constraints. Default: True.
+        nonlinear constraints. Default: True. Automatically disabled when
+        atomic constraints are present on ``ref_images``.
 
     mass_weighted : bool, optional
         If True, the velocity norm \( \vert \dot{x}(t) \vert \) uses mass-weighted
@@ -298,8 +299,12 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         self._mass_fracs = self._masses/np.sum(self._masses)
 
         #Constraints
-        self.remove_rotation_and_translation \
-            = remove_rotation_and_translation
+        has_constraints = any(
+            getattr(image, "constraints", None) for image in ref_images
+        )
+        if has_constraints:
+            remove_rotation_and_translation = False
+        self.remove_rotation_and_translation = remove_rotation_and_translation
         self.eps_vel = float(eps_vel)
         self.eps_rot = float(eps_rot)
 
@@ -435,6 +440,10 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             'limited_memory_init_val':2.5,
             'accept_every_trial_step':'yes',
             'output_file':'pathopt.out',
+
+            "mumps_mem_percent": 2,
+            "hessian_approximation": "limited-memory",
+            "limited_memory_max_history": 5,
             }
 
         if self.parallel and self._world.size>1:
@@ -690,25 +699,30 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
                 self._P_rot[0,:,1:],
                 y[:-1])
         return jac_rot
-
     def _get_consts_vel(self) -> np.ndarray:
         pos_t = self._get_positions_torch(self._P_vel_t)
-        diffs = pos_t[1:]-pos_t[:-1]
-        d2s = torch.sum(self._masses_t[None,:,None]*diffs**2,dim=(1,2))
-        return (d2s/torch.mean(d2s)).cpu().numpy()
-
+        diffs = pos_t[1:] - pos_t[:-1]
+        d2s = torch.sum(self._masses_t[None, :, None] * diffs**2, dim=(1, 2))
+        ave = torch.mean(d2s)
+        # Guard against division-by-zero in pathological trial steps
+        ave = torch.clamp(ave, min=1.0e-300)
+        return (d2s / ave).cpu().numpy()
     def _get_jac_vel(self) -> np.ndarray:
         pos_t = self._get_positions_torch(self._P_vel_t)
-        diffs = pos_t[1:]-pos_t[:-1]
-        d2s = torch.sum(self._masses_t[None,:,None]*diffs**2,dim=(1,2))
-        diff_P = self._P_vel_t[0,:,1:]-self._P_vel_t[0,:,:-1]
-        jac_d2s = 2.0*torch.einsum(
+        diffs = pos_t[1:] - pos_t[:-1]
+        d2s = torch.sum(self._masses_t[None, :, None] * diffs**2, dim=(1, 2))
+        diff_P = self._P_vel_t[0, :, 1:] - self._P_vel_t[0, :, :-1]
+        jac_d2s = 2.0 * torch.einsum(
             'a,bi,ias->ibas',
-            self._masses_t,diff_P,diffs)
+            self._masses_t, diff_P, diffs
+        )
         ave_d2s = torch.mean(d2s)
-        return (jac_d2s/ave_d2s \
-            - torch.tensordot(d2s,torch.mean(jac_d2s,dim=0),0)/(ave_d2s)**2
-            ).cpu().numpy()
+        # Guard against division-by-zero in pathological trial steps
+        ave_d2s = torch.clamp(ave_d2s, min=1.0e-300)
+        return (
+            jac_d2s / ave_d2s
+            - torch.tensordot(d2s, torch.mean(jac_d2s, dim=0), 0) / (ave_d2s**2)
+        ).cpu().numpy()
 
     def _get_jac_fin_rot(self) -> np.ndarray:
         R=self._get_rot_mats()
@@ -1027,12 +1041,15 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         pass
 
 
+    @torch.no_grad()
     def _get_norm_vels(self,nu=0):
         pos_t = self._get_positions_torch(self._P_vel_t)
         diffs = pos_t[1:]-pos_t[:-1]
 
         norm_dx = torch.sqrt(
             torch.sum(self._masses_t[None,:,None]*diffs**2,dim=(1,2)))
+        # Avoid division-by-zero in pathological trial steps (e.g., collapsed segments)
+        norm_dx = torch.clamp(norm_dx, min=1.0e-12)
         dt = torch.as_tensor(
             self.t_vel[1:]-self.t_vel[:-1],dtype=torch.float64,device=self.device)
 
@@ -1048,6 +1065,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             fd_vels[0] = fd_vels[1]
             fd_vels[-1] = fd_vels[-2]
 
+            del pos_t, diffs, norm_dx, dt; torch.cuda.empty_cache()
             return _interp1d_torch(
                 torch.as_tensor(self.t_eval,dtype=torch.float64,device=self.device),
                 t_fd_vel,fd_vels).cpu().numpy()
@@ -1066,10 +1084,12 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             grad_fd_vels[0] = grad_norm_vel[0]
             grad_fd_vels[-1] = grad_norm_vel[-1]
 
+            del pos_t, diffs, norm_dx, dt, diff_P_vel0, grad_norm_vel; torch.cuda.empty_cache()
             return _interp1d_torch(
                 torch.as_tensor(self.t_eval,dtype=torch.float64,device=self.device),
                 t_fd_vel,grad_fd_vels).cpu().numpy()
 
+    @torch.no_grad()
     def _get_action(self) -> float:
 
         self.set_positions()
@@ -1079,8 +1099,10 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         fe,dfe = self._get_func_en(self.energies)
         action = np.sum(self.w_eval*norm_vels*fe)
 
+        del norm_vels, fe, dfe; torch.cuda.empty_cache()
         return action
 
+    @torch.no_grad()
     def _get_grad_action(self) -> np.ndarray:
 
         self.set_positions()
@@ -1095,6 +1117,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
                 self._P_eval[0]*self.w_eval*norm_vels*dfe,
                 self.forces,1)
 
+        del fe, dfe, norm_vels, grad_norm_vels; torch.cuda.empty_cache()
         return grad_action
     
 
@@ -1799,14 +1822,109 @@ class DirectMaxFlux(VariationalPathOpt):
         self.energies -= self.e0
         return self.forces
 
+
+    def _log_action_and_probs(self, energies: np.ndarray, norm_vels: np.ndarray):
+        """Numerically stable evaluation of log(action) and normalized weights.
+
+        The MaxFlux action is::
+
+            action = Σ_i w_i * |ẋ(t_i)| * exp(beta * E_i)
+
+        This returns:
+            log_action = log(action)
+            p          = (w_i * |ẋ| * exp(beta E_i)) / action   (Σ p = 1)
+
+        Notes
+        -----
+        - Uses a log-sum-exp formulation to avoid overflow/underflow in exp.
+        - Entries with zero (or non-finite) weights are ignored (p_i = 0).
+        """
+        w = np.asarray(self.w_eval, dtype=np.float64)
+        v = np.asarray(norm_vels, dtype=np.float64)
+        e = np.asarray(energies, dtype=np.float64)
+
+        # Replace non-finite energies with a large penalty so the line search backs off.
+        if not np.isfinite(e).all():
+            e = np.nan_to_num(e, nan=1.0e6, posinf=1.0e6, neginf=1.0e6)
+
+        a = w * v  # quadrature weight × speed
+        mask = (a > 0.0) & np.isfinite(a)
+
+        log_terms = np.full_like(e, -np.inf, dtype=np.float64)
+        log_terms[mask] = np.log(a[mask]) + self.beta * e[mask]
+
+        m = np.max(log_terms)
+        if not np.isfinite(m):
+            return -np.inf, np.zeros_like(e, dtype=np.float64)
+
+        exp_terms = np.exp(log_terms - m)
+        denom = float(np.sum(exp_terms))
+        if (not np.isfinite(denom)) or (denom <= 0.0):
+            return -np.inf, np.zeros_like(e, dtype=np.float64)
+
+        p = exp_terms / denom
+        log_action = float(m + np.log(denom))
+        return log_action, p
+
+
     def _get_objective(self):
-        return np.log(self._get_action())/self.beta
+        """Stable objective: log(action)/beta."""
+        self.set_positions()
+        self.get_forces()
+
+        norm_vels = self._get_norm_vels()
+        log_action, _ = self._log_action_and_probs(self.energies, norm_vels)
+
+        if not np.isfinite(log_action):
+            # Force IPOPT to backtrack (avoids "Invalid number" termination).
+            return 1.0e20
+
+        return log_action / self.beta
+
 
     def _get_grad_objective(self):
-        return self._get_grad_action()/self._get_action()/self.beta
+        """Stable gradient of log(action)/beta (no exp overflow)."""
+        self.set_positions()
+        self.get_forces()
+
+        norm_vels = self._get_norm_vels()
+        grad_norm_vels = self._get_norm_vels(nu=1)
+
+        log_action, p = self._log_action_and_probs(self.energies, norm_vels)
+
+        # Safety: if anything went wrong, return zeros instead of NaNs/Infs
+        if (not np.isfinite(log_action)) or (not np.isfinite(p).all()):
+            return np.zeros((self.nbasis, self.natoms, 3), dtype=np.float64)
+
+        # First term: (1/beta) * Σ (p_i/|ẋ_i|) * ∂|ẋ_i|/∂c
+        v_safe = np.maximum(norm_vels, 1.0e-300)
+        w1 = (p / v_safe) / self.beta
+        term1 = np.tensordot(w1, grad_norm_vels, axes=([0], [0]))
+
+        # Second term: Σ p_i * ∂E_i/∂c, assembled from forces and basis values
+        forces = np.asarray(self.forces, dtype=np.float64)
+        if not np.isfinite(forces).all():
+            forces = np.nan_to_num(forces, nan=0.0, posinf=0.0, neginf=0.0)
+
+        term2 = np.tensordot(self._P_eval[0] * p, forces, axes=([1], [0]))
+
+        grad = term1 - term2
+        if not np.isfinite(grad).all():
+            grad = np.nan_to_num(grad, nan=0.0, posinf=0.0, neginf=0.0)
+        return grad
+
 
     def _get_func_en(self,en):
-        return np.exp(self.beta*en),self.beta*np.exp(self.beta*en)
+        """Legacy exp(beta*E) helper (kept for compatibility).
+
+        DirectMaxFlux overrides objective/gradient with a log-sum-exp formulation,
+        but the base-class helpers still call this. We clip the exponent to avoid
+        overflow if users call `_get_action()` directly.
+        """
+        x = self.beta * np.asarray(en, dtype=np.float64)
+        x = np.clip(x, -700.0, 700.0)
+        ex = np.exp(x)
+        return ex, self.beta * ex
 
     def intermediate(self, alg_mod, iter_count, obj_value,
                      inf_pr, inf_du, mu, d_norm, regularization_size,

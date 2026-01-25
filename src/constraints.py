@@ -106,7 +106,9 @@ def build_harmonic_constraint_calculators(atoms, k_fix=300.0, k_bond=300.0):
     """
 
     calculators = []
-    for constraint in _iter_constraints(atoms):
+    constraints = _iter_constraints(atoms)
+    remaining_constraints = []
+    for constraint in constraints:
         if isinstance(constraint, FixAtoms):
             indices = np.asarray(constraint.index, dtype=int)
             ref_positions = atoms.get_positions()[indices]
@@ -124,11 +126,15 @@ def build_harmonic_constraint_calculators(atoms, k_fix=300.0, k_bond=300.0):
             calculators.append(
                 HarmonicFixBondLengths(pairs, ref_distances, k_bond=k_bond)
             )
+            remaining_constraints.append(constraint)
         else:
             warnings.warn(
                 f"Unsupported ASE constraint {type(constraint).__name__}; "
                 "ignored for harmonic restraints."
             )
+            remaining_constraints.append(constraint)
+    if remaining_constraints != constraints:
+        atoms.set_constraint(remaining_constraints or None)
     return calculators
 
 
