@@ -41,17 +41,32 @@ We recently proposed two methods that substantially alleviate these limitations:
 
 PyDMF provides Python implementations of both methods [@pydmf]. Because reaction-path optimization is a fundamental component of studies across chemistry, physics, and materials science, PyDMF offers an efficient and robust framework that improves the practical accessibility of transition-state searches.
 
-# Key features
+# State of the field
 
-PyDMF is designed as a flexible and interoperable framework for reaction-path optimization. Through its integration with the Atomic Simulation Environment (ASE), a Python package that provides a unified interface to many atomistic simulation programs, PyDMF can access a broad range of electronic-structure and force-field engines for transition-state searches. Well-established packages such as VASP, Quantum ESPRESSO, CP2K, ORCA, Gaussian, GAMESS, LAMMPS, Amber, and GROMACS can be used as backends without any modification to PyDMF. This backend flexibility allows PyDMF to integrate smoothly into diverse atomistic modeling workflows. Usage examples and API documentation are available in the project’s GitHub repository [@pydmf].
+As noted above, existing double-ended optimization methods such as NEB are implemented internally in many atomistic simulation programs. The Atomic Simulation Environment (ASE), a Python package that provides a unified interface to many atomistic simulation programs, also provides its own implementations of NEB and several of its variants. In addition, the image-dependent pair potential (IDPP) method [@smidstrup2014improved] for generating initial paths is available in software such as ORCA and ASE.
 
-# Related Works
+From a theoretical standpoint, DMF implemented in PyDMF differs fundamentally from the existing approaches. DMF is based on a variational formulation in which reaction-path optimization is expressed as a well-defined minimization problem with an explicit objective function. In contrast to NEB or string methods, which rely on non-variational schemes, DMF can directly leverage general-purpose nonlinear optimization algorithms. In practice, PyDMF employs the state-of-the-art optimizer IPOPT via its Python interface cyipopt, enabling efficient and robust optimization without introducing method-specific path-update algorithms.
 
-As noted above, existing double-ended optimization methods such as NEB are implemented internally in many atomistic simulation programs. ASE also provides its own implementations of NEB and several of its variants. In addition, the image-dependent pair potential (IDPP) method [@smidstrup2014improved] for generating initial paths is available in software such as ORCA and ASE.
+This design choice necessarily introduces a dependency on external optimization libraries. For this reason, PyDMF was developed as a standalone software package rather than as a contribution to an existing framework. Requiring DMF-specific optimizer dependencies, which also require the use of conda, for all users of an integrated framework such as ASE would impose unnecessary constraints on users who do not require DMF functionality. Implementing PyDMF as an independent package therefore provides a practical separation of concerns, allowing advanced variational reaction-path optimization capabilities to be offered exclusively to users who need them.
 
-The efficiency and robustness of DMF and FB-ENM relative to existing approaches have been demonstrated in the benchmark studies reported in their original publications [@koda2024locating; @koda2024flatbott; @koda2025correlat]. Using a dataset of 121 representative chemical reactions involving typical elements [@asgeirsson2021nudgedel], DMF reduced the computational cost by roughly 70% compared with a conventional NEB calculation. FB-ENM was shown to produce more energetically favorable paths than IDPP, and to generate chemically plausible initial paths even for complex reactions in which IDPP often fails.
+# Software design
 
-PyDMF has also been integrated into other computational workflows. For example, it is employed as the transition-state search engine in ColabReaction, a web-based application for transition-state search [@karasawa2025colabrea].
+PyDMF is designed around a clear separation between reaction-path optimization algorithms and energy evaluation backends. Its core design principle is to focus on the implementation of reaction-path optimization methods, while delegating energy and force evaluations to existing atomistic simulation software. ASE provides a well-established abstraction layer that enables this separation, and PyDMF inherits this abstraction by directly interfacing with ASE rather than reimplementing backend-specific functionality.
+
+Through its integration with ASE, PyDMF can access a broad range of electronic-structure and force-field engines for transition-state searches. Well-established packages such as VASP, Quantum ESPRESSO, CP2K, ORCA, Gaussian, GAMESS, LAMMPS, Amber, and GROMACS can be used as backends without any modification to PyDMF. This design choice preserves backend flexibility while allowing PyDMF to integrate smoothly into diverse atomistic modeling workflows. Usage examples and API documentation are available in the project’s GitHub repository [@pydmf].
+
+In PyDMF, the implementation focuses on defining the nonlinear optimization problem, while the actual optimization is performed using powerful external libraries. This design choice introduces certain disadvantages, such as a strong reliance on conda-based environments and the resulting difficulty of inclusion within frameworks such as ASE. Nevertheless, this trade-off was made deliberately, prioritizing improved performance and robustness of transition-state searches over minimizing external dependencies.
+
+# Research impact statement
+
+The research impact of PyDMF is supported by both quantitative benchmark results and its integration into user-facing computational workflows. The efficiency and robustness of DMF and FB-ENM relative to existing reaction-path optimization approaches have been demonstrated in benchmark studies reported in their original publications [@koda2024locating; @koda2024flatbott; @koda2025correlat]. Using a dataset of 121 representative chemical reactions involving typical elements [@asgeirsson2021nudgedel], DMF reduced the computational cost by approximately 70% compared with conventional NEB calculations. FB-ENM was shown to generate more energetically favorable reaction paths than IDPP and to produce chemically plausible initial paths even for complex reactions where IDPP often fails.
+
+Beyond these benchmarks, PyDMF has been adopted as a core component in higher-level computational workflows. Notably, it serves as the transition-state search engine in ColabReaction, a web-based application for transition-state searches [@karasawa2025colabrea]. This integration demonstrates that PyDMF is not only a methodological implementation but also a practical and reusable software component that supports accessible and reliable transition-state searches.
+
+
+# AI usage disclosure
+
+ChatGPT was used during the development of PyDMF and the preparation of this manuscript. For the source code, suggested code snippets were used specifically for implementing parts of the MPI parallelization, as well as for guidance on Python package directory structure and the preparation of pyproject.toml. All such code was reviewed and tested by the authors. ChatGPT was also used interactively to assist in drafting the manuscript, the GitHub repository README, and the API documentation. In all cases, the final content was written, verified, and approved by the authors.
 
 # Acknowledgements
 
