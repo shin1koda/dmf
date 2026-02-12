@@ -48,9 +48,9 @@ def _resolve_torch_dtype(dtype_spec):
         return torch.float64
     try:
         np_dtype = np.dtype(dtype_spec)
-        if np_dtype == np.float32:
+        if np_dtype.kind == "f" and np_dtype.itemsize == 4:
             return torch.float32
-        if np_dtype == np.float64:
+        if np_dtype.kind == "f" and np_dtype.itemsize == 8:
             return torch.float64
     except Exception:
         pass
@@ -115,7 +115,7 @@ class FB_ENM(Calculator):
 
         self.device = _resolve_torch_device(device)
         self.torch_dtype = _resolve_torch_dtype(dtype)
-        self.np_dtype = np.float32 if self.torch_dtype == torch.float32 else np.float64
+        self.np_dtype = np.float64
         self._return_energy_mats = bool(return_energy_mats)
         self._d_min_t = None
         self._d_max_t = None
@@ -296,7 +296,7 @@ class FB_ENM_Bonds(FB_ENM):
     ):
         self.device = _resolve_torch_device(device)
         self.torch_dtype = _resolve_torch_dtype(dtype)
-        self.np_dtype = np.float32 if self.torch_dtype == torch.float32 else np.float64
+        self.np_dtype = np.float64
         _dev = self.device
         _tdt = self.torch_dtype
 
@@ -455,6 +455,7 @@ class CFB_ENM(Calculator):
         Calculator.__init__(self)
         self.device = _resolve_torch_device(device)
         self.torch_dtype = _resolve_torch_dtype(dtype)
+        self.np_dtype = np.float64
         _dev = self.device
         _tdt = self.torch_dtype
 

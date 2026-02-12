@@ -62,9 +62,9 @@ def _resolve_torch_dtype(dtype_spec):
         return torch.float64
     try:
         np_dtype = np.dtype(dtype_spec)
-        if np_dtype == np.float32:
+        if np_dtype.kind == "f" and np_dtype.itemsize == 4:
             return torch.float32
-        if np_dtype == np.float64:
+        if np_dtype.kind == "f" and np_dtype.itemsize == 8:
             return torch.float64
     except Exception:
         pass
