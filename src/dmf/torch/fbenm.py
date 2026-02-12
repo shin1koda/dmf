@@ -549,6 +549,30 @@ class CFB_ENM(Calculator):
             self.quartets_t = torch.as_tensor(self.quartets,dtype=torch.long,device=_dev)
         else:
             self.quartets_t = torch.zeros((0,4),dtype=torch.long,device=_dev)
+        if self.quartets_t.numel() > 0:
+            self._q_i_t = self.quartets_t[:, 0]
+            self._q_j_t = self.quartets_t[:, 1]
+            self._q_k_t = self.quartets_t[:, 2]
+            self._q_l_t = self.quartets_t[:, 3]
+            self._d00_ij_t = self.d_corr0_t[self._q_i_t, self._q_j_t]
+            self._d00_kl_t = self.d_corr0_t[self._q_k_t, self._q_l_t]
+            self._d10_ij_t = self.d_corr1_t[self._q_i_t, self._q_j_t] - self._d00_ij_t
+            self._d10_kl_t = self.d_corr1_t[self._q_k_t, self._q_l_t] - self._d00_kl_t
+            self._d20_ij_t = self.d_corr2_t[self._q_i_t, self._q_j_t] - self._d00_ij_t
+            self._d20_kl_t = self.d_corr2_t[self._q_k_t, self._q_l_t] - self._d00_kl_t
+            self._dnm_t = self._d20_ij_t * self._d20_kl_t - self._d10_ij_t * self._d10_kl_t
+        else:
+            self._q_i_t = torch.zeros((0,), dtype=torch.long, device=_dev)
+            self._q_j_t = torch.zeros((0,), dtype=torch.long, device=_dev)
+            self._q_k_t = torch.zeros((0,), dtype=torch.long, device=_dev)
+            self._q_l_t = torch.zeros((0,), dtype=torch.long, device=_dev)
+            self._d00_ij_t = torch.zeros((0,), dtype=_tdt, device=_dev)
+            self._d00_kl_t = torch.zeros((0,), dtype=_tdt, device=_dev)
+            self._d10_ij_t = torch.zeros((0,), dtype=_tdt, device=_dev)
+            self._d10_kl_t = torch.zeros((0,), dtype=_tdt, device=_dev)
+            self._d20_ij_t = torch.zeros((0,), dtype=_tdt, device=_dev)
+            self._d20_kl_t = torch.zeros((0,), dtype=_tdt, device=_dev)
+            self._dnm_t = torch.zeros((0,), dtype=_tdt, device=_dev)
 
     def copy(self, images=None):
         return type(self)(
@@ -640,19 +664,22 @@ class CFB_ENM(Calculator):
             return
 
         pos = torch.as_tensor(r, dtype=self.torch_dtype, device=self.device)
-        q = self.quartets_t
-        i = q[:,0]; j = q[:,1]; k = q[:,2]; l = q[:,3]
+        i = self._q_i_t
+        j = self._q_j_t
+        k = self._q_k_t
+        l = self._q_l_t
 
         diff_ij = pos[i]-pos[j]
         diff_kl = pos[k]-pos[l]
         d_ij = torch.linalg.norm(diff_ij,dim=1)
         d_kl = torch.linalg.norm(diff_kl,dim=1)
 
-        d00_ij = self.d_corr0_t[i,j]; d00_kl = self.d_corr0_t[k,l]
-        d10_ij = self.d_corr1_t[i,j]-d00_ij
-        d10_kl = self.d_corr1_t[k,l]-d00_kl
-        d20_ij = self.d_corr2_t[i,j]-d00_ij
-        d20_kl = self.d_corr2_t[k,l]-d00_kl
+        d00_ij = self._d00_ij_t
+        d00_kl = self._d00_kl_t
+        d10_ij = self._d10_ij_t
+        d10_kl = self._d10_kl_t
+        d20_ij = self._d20_ij_t
+        d20_kl = self._d20_kl_t
 
         dd0_ij = d_ij-d00_ij
         dd0_kl = d_kl-d00_kl
@@ -662,7 +689,7 @@ class CFB_ENM(Calculator):
         if not torch.any(ok):
             self.results = {'energy': 0.0,
                             'forces': np.zeros([natoms,3], dtype=self.np_dtype)}
-            del natoms, pos, q, i, j, k, l, diff_ij, diff_kl, d_ij, d_kl, d00_ij, d00_kl, d10_ij, d10_kl, d20_ij, d20_kl, dd0_ij, dd0_kl, pp, ok
+            del natoms, pos, i, j, k, l, diff_ij, diff_kl, d_ij, d_kl, d00_ij, d00_kl, d10_ij, d10_kl, d20_ij, d20_kl, dd0_ij, dd0_kl, pp, ok
             return
 
         i = i[ok]; j = j[ok]; k = k[ok]; l = l[ok]
@@ -673,7 +700,7 @@ class CFB_ENM(Calculator):
         d20_ij = d20_ij[ok]; d20_kl = d20_kl[ok]
         pp = pp[ok]
 
-        dnm = d20_ij*d20_kl-d10_ij*d10_kl
+        dnm = self._dnm_t[ok]
         pp = pp/dnm
         eps = float(self.eps)
         sqrt_pp2 = torch.sqrt(pp*pp+eps*eps)
@@ -691,7 +718,7 @@ class CFB_ENM(Calculator):
 
         self.results = {'energy': float(energy),
                         'forces': forces.cpu().numpy()}
-        del natoms, pos, q, i, j, k, l, diff_ij, diff_kl, d_ij, d_kl, d00_ij, d00_kl, d10_ij, d10_kl, d20_ij, d20_kl, dd0_ij, dd0_kl, pp, dnm, eps, sqrt_pp2, alpha, v1, v2, forces
+        del natoms, pos, i, j, k, l, diff_ij, diff_kl, d_ij, d_kl, d00_ij, d00_kl, d10_ij, d10_kl, d20_ij, d20_kl, dd0_ij, dd0_kl, pp, dnm, eps, sqrt_pp2, alpha, v1, v2, forces
 
 
 def _get_planes(images, bond_scale=1.25, tol_rmsd=0.05, tol_ang=10.0, *, device=None, dtype=None):

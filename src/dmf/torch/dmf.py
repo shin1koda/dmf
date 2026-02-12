@@ -419,6 +419,11 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         d2basis = [b.derivative(nu=2) for b in basis]
         self._basis = [basis,d1basis,d2basis]
 
+        # Callback/evaluation caches
+        self._cached_callback_x = None
+        self._positions_ready = False
+        self._state_eval_ready = False
+
         #t-sequences
         if t_eval is None:
             self.set_t_eval(np.linspace(0.0,1.0,2*self.nsegs+1))
@@ -556,6 +561,37 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             for b in self._basis[nu]]
             for nu in range(3)])
 
+    def _invalidate_eval_cache(self):
+        self._state_eval_ready = False
+
+    def _invalidate_callback_x_cache(self):
+        self._cached_callback_x = None
+
+    def _ensure_current_state(self):
+        if not self._positions_ready:
+            self.set_positions()
+        if not self._state_eval_ready:
+            self.get_forces()
+            self._state_eval_ready = True
+
+    def _set_x_if_changed(self, x: np.ndarray):
+        x_arr = np.asarray(x)
+        if (
+            self._cached_callback_x is not None
+            and self._cached_callback_x.shape == x_arr.shape
+            and np.array_equal(self._cached_callback_x, x_arr)
+        ):
+            return
+
+        self.set_x(x_arr)
+        if (
+            self._cached_callback_x is None
+            or self._cached_callback_x.shape != x_arr.shape
+        ):
+            self._cached_callback_x = x_arr.copy()
+        else:
+            self._cached_callback_x[...] = x_arr
+
     def set_t_eval(self,t_eval):
         """
         Set the energy evaluation points ``t_eval``.
@@ -577,6 +613,9 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         self._t_eval_t = torch.as_tensor(
             self.t_eval, dtype=self.torch_dtype, device=self.device
         )
+        self._positions_ready = False
+        self._invalidate_eval_cache()
+        self._invalidate_callback_x_cache()
 
     def set_w_eval(self, w_eval: Optional[np.ndarray] = None):
         """
@@ -603,6 +642,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             w[-1] = 0.5*(self.t_eval[-1]-self.t_eval[-2])
             w[1:-1] = 0.5*(self.t_eval[2:]-self.t_eval[:-2])
             self.w_eval = w
+        self._invalidate_callback_x_cache()
 
     def _get_coefs_from_ref_images(self, ref_images) -> np.ndarray:
         ref_images_copy = [image.copy() for image in ref_images]
@@ -736,6 +776,9 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         R=self._get_rot_mats()
         self.coefs[-1]=self._coefs0[-1]@R[0]@R[1]@R[2]
         self.coefs_t[-1].copy_(torch.as_tensor(self.coefs[-1], dtype=self.torch_dtype, device=self.device))
+        self._positions_ready = False
+        self._invalidate_eval_cache()
+        self._invalidate_callback_x_cache()
 
     def _get_positions_torch(self, P_t: torch.Tensor, nu=0) -> torch.Tensor:
         return torch.tensordot(P_t[nu].T.contiguous(),self.coefs_t,1)
@@ -780,6 +823,8 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         pos = self.get_positions()
         for i in range(self.t_eval.size):
             self.images[i].set_positions(pos[i])
+        self._positions_ready = True
+        self._invalidate_eval_cache()
 
     def _get_consts_trans(self) -> np.ndarray:
         pos = self.get_positions(P=self._P_trans)
@@ -815,6 +860,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         # Guard against division-by-zero in pathological trial steps
         ave = torch.clamp(ave, min=1.0e-300)
         return (d2s / ave).cpu().numpy()
+
     def _get_jac_vel(self) -> np.ndarray:
         pos_t = self._get_positions_torch(self._P_vel_t)
         diffs = pos_t[1:] - pos_t[:-1]
@@ -935,6 +981,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
         self.energies = energies
         self.forces = forces
+        self._state_eval_ready = True
 
         return forces
 
@@ -1159,8 +1206,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
     @torch.no_grad()
     def _get_action(self) -> float:
 
-        self.set_positions()
-        self.get_forces()
+        self._ensure_current_state()
 
         norm_vels = self._get_norm_vels()
         fe,dfe = self._get_func_en(self.energies)
@@ -1171,8 +1217,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
     @torch.no_grad()
     def _get_grad_action(self) -> np.ndarray:
 
-        self.set_positions()
-        self.get_forces()
+        self._ensure_current_state()
 
         fe,dfe = self._get_func_en(self.energies)
         norm_vels = self._get_norm_vels()
@@ -1467,7 +1512,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         The argument ``x`` is the flattened optimization variable vector,
         and the return value is the scalar objective evaluated at that state.
         """
-        self.set_x(x)
+        self._set_x_if_changed(x)
         return self._get_objective()
 
     def gradient(self, x: np.ndarray) -> np.ndarray:
@@ -1479,7 +1524,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         The argument ``x`` is the flattened optimization variable vector,
         and the return value is the gradient of the objective with respect to ``x``.
         """
-        self.set_x(x)
+        self._set_x_if_changed(x)
         grad = self._reshape_jacs(
             [self._get_grad_objective()])
         return grad*self.var_scales
@@ -1493,7 +1538,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         The argument ``x`` is the flattened optimization variable vector,
         and the return value is the array of constraint values at that state.
         """
-        self.set_x(x)
+        self._set_x_if_changed(x)
         c_list = [self._get_consts_vel()]
         if self.remove_rotation_and_translation:
             c_list.append(self._get_consts_trans())
@@ -1509,7 +1554,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         The argument ``x`` is the flattened optimization variable vector,
         and the return value is the Jacobian matrix of the constraint functions.
         """
-        self.set_x(x)
+        self._set_x_if_changed(x)
         j_list = [self._get_jac_vel()]
         if self.remove_rotation_and_translation:
             j_list.append(self._get_jac_trans())
@@ -1939,8 +1984,7 @@ class DirectMaxFlux(VariationalPathOpt):
 
     def _get_objective(self):
         """Stable objective: log(action)/beta."""
-        self.set_positions()
-        self.get_forces()
+        self._ensure_current_state()
 
         norm_vels = self._get_norm_vels()
         log_action, _ = self._log_action_and_probs(self.energies, norm_vels)
@@ -1954,8 +1998,7 @@ class DirectMaxFlux(VariationalPathOpt):
 
     def _get_grad_objective(self):
         """Stable gradient of log(action)/beta (no exp overflow)."""
-        self.set_positions()
-        self.get_forces()
+        self._ensure_current_state()
 
         norm_vels = self._get_norm_vels()
         grad_norm_vels = self._get_norm_vels(nu=1)
