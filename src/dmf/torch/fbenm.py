@@ -152,6 +152,17 @@ class FB_ENM(Calculator):
         self.delta_min = delta_min_np
         self.delta_max = delta_max_np
 
+    def copy(self):
+        return FB_ENM(
+            self.d_min,
+            self.d_max,
+            delta_min=self.delta_min,
+            delta_max=self.delta_max,
+            return_energy_mats=self._return_energy_mats,
+            device=self.device,
+            dtype=self.torch_dtype,
+        )
+
     @torch.no_grad()
     def calculate(self, atoms, properties, system_changes):
         super().calculate(atoms, properties, system_changes)
@@ -331,7 +342,7 @@ class FB_ENM_Bonds(FB_ENM):
                 J = (d/r_cov)<bond_scale_t
                 J_t = J.to(_tdt)
                 A = (J_t@J_t)>0
-                del J, J_t; torch.cuda.empty_cache()
+                del J, J_t
 
                 if fix_planes:
                     A = A|addA_p
@@ -342,10 +353,10 @@ class FB_ENM_Bonds(FB_ENM):
 
                 cand_min = torch.where(A,d,torch.minimum(d,r_vdw))
                 cand_max = torch.where(A,d,2.0*torch.amax(d))
-                del d, A; torch.cuda.empty_cache()
+                del d, A
                 d_min = torch.minimum(d_min,cand_min)
                 d_max = torch.maximum(d_max,cand_max)
-                del cand_min, cand_max; torch.cuda.empty_cache()
+                del cand_min, cand_max
 
             if (d_min_overwrite is not None) and (A_overwrite is not None):
                 mask = torch.as_tensor(A_overwrite,dtype=torch.bool,device=_dev)
@@ -354,9 +365,9 @@ class FB_ENM_Bonds(FB_ENM):
                 mask = torch.as_tensor(A_overwrite,dtype=torch.bool,device=_dev)
                 d_max = torch.where(mask,torch.as_tensor(d_max_overwrite,dtype=_tdt,device=_dev),d_max)
 
-        del numbers, r_cov_np, r_vdw_np, r_cov, r_vdw, bond_scale_t, natoms, addA_p, addA_mask, delA_mask; torch.cuda.empty_cache()
+        del numbers, r_cov_np, r_vdw_np, r_cov, r_vdw, bond_scale_t, natoms, addA_p, addA_mask, delA_mask
         super().__init__(d_min, d_max, delta_scale=delta_scale, device=device, dtype=self.torch_dtype)
-        del d_min, d_max; torch.cuda.empty_cache()
+        del d_min, d_max
 
 
 class CFB_ENM(Calculator):
@@ -436,7 +447,8 @@ class CFB_ENM(Calculator):
 
     def __init__(
         self,
-        images,
+        images=None,
+        d_bond: Optional[np.ndarray] = None,
         bond_scale: float = 1.25,
         d_corr0: Optional[np.ndarray] = None,
         corr0_scale: float = 1.10,
@@ -445,6 +457,7 @@ class CFB_ENM(Calculator):
         d_corr2: Optional[np.ndarray] = None,
         corr2_scale: float = 1.60,
         eps: float = 0.05,
+        quartets: Optional[list] = None,
         pivotal: bool = True,
         single: bool = True,
         remove_fourmembered: bool = True,
@@ -459,56 +472,71 @@ class CFB_ENM(Calculator):
         _dev = self.device
         _tdt = self.torch_dtype
 
-        numbers = images[0].arrays['numbers']
-        r_cov_np = covalent_radii[numbers][:,None]+covalent_radii[numbers]
-        self.r_cov_t = torch.as_tensor(r_cov_np,dtype=_tdt,device=_dev)
-        self.bond_scale_t = torch.tensor(float(bond_scale),dtype=_tdt,device=_dev)
+        need_bond = d_bond is None
+        need_quartets = quartets is None
 
-        natoms = len(images[0])
-        d_bonds = torch.zeros([len(images),natoms,natoms],dtype=_tdt,device=_dev)
-        Js = []
+        if need_bond or need_quartets:
+            if images is None:
+                raise ValueError("images are required when d_bond or quartets are not provided.")
 
-        with torch.no_grad():
-            for i,image in enumerate(images):
-                d = _calc_dist_mat(image.get_positions(), device=self.device, dtype=self.torch_dtype)
-                J = (d/self.r_cov_t)<self.bond_scale_t
-                J.fill_diagonal_(False)
-                Js.append(J)
-                d_bonds[i] = torch.where(J,d,torch.zeros_like(d))
-                del d; torch.cuda.empty_cache()
+            numbers = images[0].arrays['numbers']
+            r_cov_np = covalent_radii[numbers][:, None] + covalent_radii[numbers]
+            r_cov_t = torch.as_tensor(r_cov_np, dtype=_tdt, device=_dev)
+            bond_scale_t = torch.tensor(float(bond_scale), dtype=_tdt, device=_dev)
 
-        self.d_bond = torch.max(d_bonds, dim=0).values.cpu().numpy()
-        del d_bonds; torch.cuda.empty_cache()
+            natoms = len(images[0])
+            d_bonds = torch.zeros([len(images), natoms, natoms], dtype=_tdt, device=_dev)
+            Js = []
+            with torch.no_grad():
+                for i, image in enumerate(images):
+                    d = _calc_dist_mat(image.get_positions(), device=self.device, dtype=self.torch_dtype)
+                    J = (d / r_cov_t) < bond_scale_t
+                    J.fill_diagonal_(False)
+                    Js.append(J)
+                    d_bonds[i] = torch.where(J, d, torch.zeros_like(d))
 
-        J_only_r = Js[0]&(~Js[-1])
-        J_only_p = Js[-1]&(~Js[0])
-        J_both = Js[0]&Js[-1]
-        del Js; torch.cuda.empty_cache()
+            if need_bond:
+                self.d_bond = torch.max(d_bonds, dim=0).values.cpu().numpy()
+            else:
+                self.d_bond = np.asarray(d_bond, dtype=self.np_dtype).copy()
 
-        self.quartets = self._get_quartets(
-                            J_only_r,J_only_p,J_both,
-                            pivotal=pivotal,single=single,
-                            remove_fourmembered=remove_fourmembered)
-        del J_only_r, J_only_p, J_both; torch.cuda.empty_cache()
+            if need_quartets:
+                J_only_r = Js[0] & (~Js[-1])
+                J_only_p = Js[-1] & (~Js[0])
+                J_both = Js[0] & Js[-1]
+                self.quartets = self._get_quartets(
+                    J_only_r,
+                    J_only_p,
+                    J_both,
+                    pivotal=pivotal,
+                    single=single,
+                    remove_fourmembered=remove_fourmembered,
+                )
+            else:
+                self.quartets = [list(map(int, q)) for q in quartets]
+        else:
+            self.d_bond = np.asarray(d_bond, dtype=self.np_dtype).copy()
+            self.quartets = [list(map(int, q)) for q in quartets]
+            natoms = self.d_bond.shape[0]
 
         if d_corr0 is not None:
-            self.d_corr0 = d_corr0
+            self.d_corr0 = np.asarray(d_corr0, dtype=self.np_dtype).copy()
         else:
             self.d_corr0 = corr0_scale * self.d_bond
 
         if d_corr1 is not None:
-            self.d_corr1 = d_corr1
+            self.d_corr1 = np.asarray(d_corr1, dtype=self.np_dtype).copy()
         else:
             self.d_corr1 = corr1_scale * self.d_bond
 
         if d_corr2 is not None:
-            self.d_corr2 = d_corr2
+            self.d_corr2 = np.asarray(d_corr2, dtype=self.np_dtype).copy()
         else:
             self.d_corr2 = corr2_scale * self.d_bond
 
         self.eps = eps
 
-        I = np.identity(natoms,dtype='bool')
+        I = np.identity(natoms, dtype="bool")
         self.d_bond[I] = 0.0
         self.d_corr0[I] = 0.0
         self.d_corr1[I] = 0.0
@@ -522,6 +550,19 @@ class CFB_ENM(Calculator):
         else:
             self.quartets_t = torch.zeros((0,4),dtype=torch.long,device=_dev)
 
+    def copy(self, images=None):
+        return type(self)(
+            images=images,
+            d_bond=self.d_bond,
+            d_corr0=self.d_corr0,
+            d_corr1=self.d_corr1,
+            d_corr2=self.d_corr2,
+            eps=self.eps,
+            quartets=self.quartets,
+            device=self.device,
+            dtype=self.torch_dtype,
+        )
+
     def _get_quartets(self,J_only_r,J_only_p,J_both,
             pivotal=True,single=True,remove_fourmembered=True):
 
@@ -531,7 +572,7 @@ class CFB_ENM(Calculator):
             J_both_t = torch.as_tensor(J_both, dtype=self.torch_dtype, device=self.device)
         J2 = (J_both_t @ J_both_t) > 0
         J2 = J2.cpu().numpy()
-        del J_both_t; torch.cuda.empty_cache()
+        del J_both_t
 
         J_only_r = J_only_r.cpu().numpy() if isinstance(J_only_r,torch.Tensor) else np.asarray(J_only_r,bool)
         J_only_p = J_only_p.cpu().numpy() if isinstance(J_only_p,torch.Tensor) else np.asarray(J_only_p,bool)
@@ -595,7 +636,7 @@ class CFB_ENM(Calculator):
         if self.quartets_t.numel()==0:
             self.results = {'energy': 0.0,
                             'forces': np.zeros([natoms,3], dtype=self.np_dtype)}
-            del natoms, r; torch.cuda.empty_cache()
+            del natoms, r
             return
 
         pos = torch.as_tensor(r, dtype=self.torch_dtype, device=self.device)
@@ -621,7 +662,7 @@ class CFB_ENM(Calculator):
         if not torch.any(ok):
             self.results = {'energy': 0.0,
                             'forces': np.zeros([natoms,3], dtype=self.np_dtype)}
-            del natoms, pos, q, i, j, k, l, diff_ij, diff_kl, d_ij, d_kl, d00_ij, d00_kl, d10_ij, d10_kl, d20_ij, d20_kl, dd0_ij, dd0_kl, pp, ok; torch.cuda.empty_cache()
+            del natoms, pos, q, i, j, k, l, diff_ij, diff_kl, d_ij, d_kl, d00_ij, d00_kl, d10_ij, d10_kl, d20_ij, d20_kl, dd0_ij, dd0_kl, pp, ok
             return
 
         i = i[ok]; j = j[ok]; k = k[ok]; l = l[ok]
@@ -650,7 +691,7 @@ class CFB_ENM(Calculator):
 
         self.results = {'energy': float(energy),
                         'forces': forces.cpu().numpy()}
-        del natoms, pos, q, i, j, k, l, diff_ij, diff_kl, d_ij, d_kl, d00_ij, d00_kl, d10_ij, d10_kl, d20_ij, d20_kl, dd0_ij, dd0_kl, pp, dnm, eps, sqrt_pp2, alpha, v1, v2, forces; torch.cuda.empty_cache()
+        del natoms, pos, q, i, j, k, l, diff_ij, diff_kl, d_ij, d_kl, d00_ij, d00_kl, d10_ij, d10_kl, d20_ij, d20_kl, dd0_ij, dd0_kl, pp, dnm, eps, sqrt_pp2, alpha, v1, v2, forces
 
 
 def _get_planes(images, bond_scale=1.25, tol_rmsd=0.05, tol_ang=10.0, *, device=None, dtype=None):
@@ -741,7 +782,7 @@ def _get_planes(images, bond_scale=1.25, tol_rmsd=0.05, tol_ang=10.0, *, device=
                                              and is_not_linear(atoms,c4)
                                              and is_trans(atoms,c4))]
             pels_center = [c4 for c4 in c4s_center if (rmsd(pos,c4)<tol_rmsd)]
-            del pos, cov_radii, r_cov, d, A, nghs; torch.cuda.empty_cache()
+            del pos, cov_radii, r_cov, d, A, nghs
 
         else:
             pels_cis = [c4 for c4 in pels_cis
@@ -757,7 +798,7 @@ def _get_planes(images, bond_scale=1.25, tol_rmsd=0.05, tol_ang=10.0, *, device=
             pels_center = [c4 for c4 in pels_center
                               if (rmsd(pos,c4)<tol_rmsd
                                   and is_connected_center(nghs,c4))]
-            del pos, cov_radii, r_cov, d, A, nghs; torch.cuda.empty_cache()
+            del pos, cov_radii, r_cov, d, A, nghs
 
     pels = [set(pel) for pel in pels_cis+pels_trans+pels_center]
 

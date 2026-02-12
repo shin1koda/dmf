@@ -103,14 +103,16 @@ def interpolate_fbenm(
     else:
         fbenm_images = [image.copy() for image in ref_images]
 
+    calc_f = FB_ENM_Bonds(fbenm_images, device=device, dtype=dtype, **fbenm_options)
+    calc_c = None
+    if correlated:
+        calc_c = CFB_ENM(fbenm_images, device=device, dtype=dtype, **cfbenm_options)
+
     for image in mxflx.images:
         if correlated:
-            calcs = [
-                FB_ENM_Bonds(fbenm_images, device=device, dtype=dtype, **fbenm_options),
-                CFB_ENM(fbenm_images, device=device, dtype=dtype, **cfbenm_options),
-            ]
+            calcs = [calc_f.copy(), calc_c.copy()]
         else:
-            calcs = [FB_ENM_Bonds(fbenm_images, device=device, dtype=dtype, **fbenm_options)]
+            calcs = [calc_f.copy()]
 
         if len(calcs) == 1:
             image.calc = calcs[0]

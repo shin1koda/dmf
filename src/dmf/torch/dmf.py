@@ -444,6 +444,19 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         else:
             self.n_rot = int(n_rot)
         self.t_rot = np.linspace(0.0,1.0,self.n_rot+1)
+        self._dt_vel_t = torch.as_tensor(
+            self.t_vel[1:] - self.t_vel[:-1], dtype=self.torch_dtype, device=self.device
+        )
+        self._t_fd_vel_t = torch.zeros(
+            self.t_vel.size + 1, dtype=self.torch_dtype, device=self.device
+        )
+        self._t_fd_vel_t[1:-1] = 0.5 * (
+            torch.as_tensor(self.t_vel[1:], dtype=self.torch_dtype, device=self.device)
+            + torch.as_tensor(self.t_vel[:-1], dtype=self.torch_dtype, device=self.device)
+        )
+        self._t_fd_vel_t[-1] = torch.tensor(
+            1.0, dtype=self.torch_dtype, device=self.device
+        )
 
         #Basis values: [derivative order, basis, t]
         self._P_eval = self._get_basis_values(self.t_eval)
@@ -561,6 +574,9 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         self.t_eval = np.asarray(t_eval)
         self._P_eval = self._get_basis_values(self.t_eval)
         self._P_eval_t = torch.as_tensor(self._P_eval, dtype=self.torch_dtype, device=self.device)
+        self._t_eval_t = torch.as_tensor(
+            self.t_eval, dtype=self.torch_dtype, device=self.device
+        )
 
     def set_w_eval(self, w_eval: Optional[np.ndarray] = None):
         """
@@ -704,8 +720,17 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
         """        
         if coefs is not None:
-            self.coefs=coefs
-            self.coefs_t = torch.as_tensor(self.coefs, dtype=self.torch_dtype, device=self.device)
+            self.coefs = coefs
+            coefs_t = torch.as_tensor(self.coefs, dtype=self.torch_dtype, device=self.device)
+            if (
+                hasattr(self, "coefs_t")
+                and self.coefs_t.shape == coefs_t.shape
+                and self.coefs_t.device == coefs_t.device
+                and self.coefs_t.dtype == coefs_t.dtype
+            ):
+                self.coefs_t.copy_(coefs_t)
+            else:
+                self.coefs_t = coefs_t
         if angs is not None:
             self.angs = angs
         R=self._get_rot_mats()
@@ -1100,14 +1125,8 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             torch.sum(self._masses_t[None,:,None]*diffs**2,dim=(1,2)))
         # Avoid division-by-zero in pathological trial steps (e.g., collapsed segments)
         norm_dx = torch.clamp(norm_dx, min=1.0e-12)
-        dt = torch.as_tensor(
-            self.t_vel[1:]-self.t_vel[:-1], dtype=self.torch_dtype, device=self.device)
-
-        t_fd_vel = torch.zeros(self.t_vel.size+1, dtype=self.torch_dtype, device=self.device)
-        t_fd_vel[1:-1] = 0.5*(
-            torch.as_tensor(self.t_vel[1:], dtype=self.torch_dtype, device=self.device)
-            + torch.as_tensor(self.t_vel[:-1], dtype=self.torch_dtype, device=self.device))
-        t_fd_vel[-1] = torch.tensor(1.0, dtype=self.torch_dtype, device=self.device)
+        dt = self._dt_vel_t
+        t_fd_vel = self._t_fd_vel_t
 
         if nu==0:
             fd_vels = torch.zeros(self.t_vel.size + 1, dtype=self.torch_dtype, device=self.device)
@@ -1115,9 +1134,8 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             fd_vels[0] = fd_vels[1]
             fd_vels[-1] = fd_vels[-2]
 
-            del pos_t, diffs, norm_dx, dt; torch.cuda.empty_cache()
             return _interp1d_torch(
-                torch.as_tensor(self.t_eval, dtype=self.torch_dtype, device=self.device),
+                self._t_eval_t,
                 t_fd_vel,fd_vels).cpu().numpy()
         else:
             diff_P_vel0 = self._P_vel_t[0,:,1:]-self._P_vel_t[0,:,:-1]
@@ -1134,9 +1152,8 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             grad_fd_vels[0] = grad_norm_vel[0]
             grad_fd_vels[-1] = grad_norm_vel[-1]
 
-            del pos_t, diffs, norm_dx, dt, diff_P_vel0, grad_norm_vel; torch.cuda.empty_cache()
             return _interp1d_torch(
-                torch.as_tensor(self.t_eval, dtype=self.torch_dtype, device=self.device),
+                self._t_eval_t,
                 t_fd_vel,grad_fd_vels).cpu().numpy()
 
     @torch.no_grad()
@@ -1149,7 +1166,6 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         fe,dfe = self._get_func_en(self.energies)
         action = np.sum(self.w_eval*norm_vels*fe)
 
-        del norm_vels, fe, dfe; torch.cuda.empty_cache()
         return action
 
     @torch.no_grad()
@@ -1167,7 +1183,6 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
                 self._P_eval[0]*self.w_eval*norm_vels*dfe,
                 self.forces,1)
 
-        del fe, dfe, norm_vels, grad_norm_vels; torch.cuda.empty_cache()
         return grad_action
     
 
@@ -1431,15 +1446,16 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
         """
         nc = (self.nbasis - 2) * 3 * self.natoms
-        coefs = self._coefs0.copy()
-
-        coefs[1:-1] = x[:nc].reshape((-1, self.natoms, 3))
-
-        angs = np.zeros(3)
+        self.coefs[1:-1] = x[:nc].reshape((-1, self.natoms, 3))
+        self.coefs_t[1:-1].copy_(
+            torch.as_tensor(
+                self.coefs[1:-1], dtype=self.torch_dtype, device=self.device
+            )
+        )
         if self.remove_rotation_and_translation:
-            angs = x[-3:]
-
-        self.set_positions(coefs, angs)
+            self.set_positions(angs=x[-3:])
+        else:
+            self.set_positions()
 
 
     def objective(self, x: np.ndarray) -> float:
