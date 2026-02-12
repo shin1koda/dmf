@@ -1,5 +1,6 @@
 import threading
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from typing import Optional
 
 import numpy as np
@@ -8,12 +9,19 @@ from scipy.interpolate import BSpline,interp1d
 from scipy.spatial.transform import Rotation
 import cyipopt
 
-import ase.parallel
 from functools import cached_property
 
 import torch
 import warnings
 
+from ..mpi_backend import _worker_loop
+try:
+    import os
+    os.environ['UCX_LOG_LEVEL'] = 'error'
+    from mpi4py import MPI
+    HAS_MPI4PY = True
+except ImportError:
+    HAS_MPI4PY = False
 
 def _resolve_torch_device(device_spec):
     """
@@ -25,12 +33,43 @@ def _resolve_torch_device(device_spec):
         try:
             d = torch.device(device_spec)
         except (TypeError, ValueError):
-            warnings.warn(f"[torch_dmf] Invalid device spec '{device_spec}', falling back to CPU.")
+            warnings.warn(f"[dmf.torch] Invalid device spec '{device_spec}', falling back to CPU.")
             d = torch.device("cpu")
     if d.type == "cuda" and not torch.cuda.is_available():
-        warnings.warn("[torch_dmf] CUDA requested but not available; falling back to CPU.")
+        warnings.warn("[dmf.torch] CUDA requested but not available; falling back to CPU.")
         d = torch.device("cpu")
     return d
+
+
+def _resolve_torch_dtype(dtype_spec):
+    """
+    Resolve a torch dtype from a user spec (float32/float64).
+    """
+    if dtype_spec is None:
+        return torch.float64
+    if isinstance(dtype_spec, torch.dtype):
+        if dtype_spec in (torch.float32, torch.float64):
+            return dtype_spec
+        warnings.warn(f"[dmf.torch] Unsupported dtype '{dtype_spec}', falling back to float64.")
+        return torch.float64
+    if isinstance(dtype_spec, str):
+        key = dtype_spec.strip().lower()
+        if key in ("float32", "fp32", "single", "float"):
+            return torch.float32
+        if key in ("float64", "fp64", "double"):
+            return torch.float64
+        warnings.warn(f"[dmf.torch] Invalid dtype spec '{dtype_spec}', falling back to float64.")
+        return torch.float64
+    try:
+        np_dtype = np.dtype(dtype_spec)
+        if np_dtype == np.float32:
+            return torch.float32
+        if np_dtype == np.float64:
+            return torch.float64
+    except Exception:
+        pass
+    warnings.warn(f"[dmf.torch] Invalid dtype spec '{dtype_spec}', falling back to float64.")
+    return torch.float64
 
 
 @torch.no_grad()
@@ -150,8 +189,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
     remove_rotation_and_translation : bool, optional
         If True, remove global translational and rotational motion using
-        nonlinear constraints. Default: True. Automatically disabled when
-        atomic constraints are present on ``ref_images``.
+        nonlinear constraints. Default: True.
 
     mass_weighted : bool, optional
         If True, the velocity norm \( \vert \dot{x}(t) \vert \) uses mass-weighted
@@ -162,8 +200,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         Default: False.
 
     world : MPI communicator, optional
-        Communicator used when ``parallel=True``. Defaults to
-        ``ase.parallel.world``.
+        Communicator used when ``parallel=True``. Default: None.
 
     t_eval : ndarray, optional
         Energy evaluation points in \( t \in [0,1] \).  
@@ -199,6 +236,9 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
     device : str or torch.device, optional
         Torch device for internal tensors. If None, auto-select.
+    dtype : str or torch.dtype, optional
+        Torch floating-point dtype for internal calculations
+        (``float32`` or ``float64``). Default: ``float64``.
 
 
     Attributes
@@ -282,13 +322,73 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         coefs=None, nsegs=4,dspl=3,
         remove_rotation_and_translation=True,
         mass_weighted=False,
+        calc_factory=None,
         parallel=False,world=None,
         t_eval=None,w_eval=None,
         n_vel=None,n_trans=None,n_rot=None,
         eps_vel=0.01,eps_rot=0.01,
         device=None,
+        dtype=None,
         ):
         self.device = _resolve_torch_device(device)
+        self.torch_dtype = _resolve_torch_dtype(dtype)
+
+        #Prallel calculation
+        self.parallel = parallel
+
+        if parallel and (parallel == "mpi" or world is not None):
+            self.parallel = "mpi"
+            if not HAS_MPI4PY:
+                raise RuntimeError("MPI parallel calculation requires mpi4py.")
+
+            self._world = MPI.COMM_WORLD if world is None else world
+            self._rank = self._world.Get_rank()
+            self._size = self._world.Get_size()
+        else:
+            self._world = None
+            self._rank = 0
+            self._size = 1
+
+
+        #Initialize images
+        if t_eval is None:
+            self._nimages = 2*nsegs+1
+        else:
+            self._nimages = len(t_eval)
+
+        self.images=[]
+        for _ in range(self._nimages):
+            self.images.append(ref_images[0].copy())
+
+        r2i = defaultdict(list)
+        for i in range(self._nimages):
+            if i==0:
+                r = 0
+            elif i==self._nimages-1:
+                r = self._size-1
+            else:
+                r = (i-1)%self._size
+
+            r2i[r].append(i)
+
+        self._r2i = r2i
+
+        #calc_factory
+        self.calc_factory = calc_factory
+
+        if self.parallel == "mpi":
+            if self.calc_factory is None:
+                raise RuntimeError("parallel='mpi' requires calc_factory.")
+
+        if self.calc_factory is not None:
+            for i in self._r2i[self._rank]:
+                self.images[i].calc = self.calc_factory(i)
+
+        if self.parallel == "mpi" and self._rank>0:
+            _worker_loop(self._world, self.images)
+            import sys
+            sys.exit(0)
+
 
         #Atoms
         self.natoms = len(ref_images[0])
@@ -299,23 +399,9 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         self._mass_fracs = self._masses/np.sum(self._masses)
 
         #Constraints
-        has_constraints = any(
-            getattr(image, "constraints", None) for image in ref_images
-        )
-        if has_constraints:
-            remove_rotation_and_translation = False
         self.remove_rotation_and_translation = remove_rotation_and_translation
         self.eps_vel = float(eps_vel)
         self.eps_rot = float(eps_rot)
-
-        #Prallel calculation
-        self.parallel = bool(parallel)
-
-        if world is None:
-            world = ase.parallel.world
-        self._world = world
-        if self._world.size == 1:
-            self.parallel = False
 
         #B-spline basis functions
         self.nsegs = int(nsegs)
@@ -375,18 +461,15 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         self._coefs0 = self.coefs.copy()
 
         # torch mirrors
-        self._masses_t = torch.as_tensor(self._masses,dtype=torch.float64,device=self.device)
-        self._mass_fracs_t = torch.as_tensor(self._mass_fracs,dtype=torch.float64,device=self.device)
-        self._P_eval_t = torch.as_tensor(self._P_eval,dtype=torch.float64,device=self.device)
-        self._P_vel_t = torch.as_tensor(self._P_vel,dtype=torch.float64,device=self.device)
-        self._P_trans_t = torch.as_tensor(self._P_trans,dtype=torch.float64,device=self.device)
-        self._P_rot_t = torch.as_tensor(self._P_rot,dtype=torch.float64,device=self.device)
-        self.coefs_t = torch.as_tensor(self.coefs,dtype=torch.float64,device=self.device)
+        self._masses_t = torch.as_tensor(self._masses, dtype=self.torch_dtype, device=self.device)
+        self._mass_fracs_t = torch.as_tensor(self._mass_fracs, dtype=self.torch_dtype, device=self.device)
+        self._P_eval_t = torch.as_tensor(self._P_eval, dtype=self.torch_dtype, device=self.device)
+        self._P_vel_t = torch.as_tensor(self._P_vel, dtype=self.torch_dtype, device=self.device)
+        self._P_trans_t = torch.as_tensor(self._P_trans, dtype=self.torch_dtype, device=self.device)
+        self._P_rot_t = torch.as_tensor(self._P_rot, dtype=self.torch_dtype, device=self.device)
+        self.coefs_t = torch.as_tensor(self.coefs, dtype=self.torch_dtype, device=self.device)
 
         #Initialize images
-        self.images=[]
-        for _ in range(self.t_eval.size):
-            self.images.append(ref_images[0].copy())
         self.set_positions()
 
         #Jacobian of the translation constraints
@@ -446,8 +529,8 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             "limited_memory_max_history": 5,
             }
 
-        if self.parallel and self._world.size>1:
-            if self._world.rank > 0:
+        if self.parallel == "mpi":
+            if self._rank > 0:
                 defaults['print_level'] = 0
 
         self.ipopt_options = dict()
@@ -477,7 +560,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         """
         self.t_eval = np.asarray(t_eval)
         self._P_eval = self._get_basis_values(self.t_eval)
-        self._P_eval_t = torch.as_tensor(self._P_eval,dtype=torch.float64,device=self.device)
+        self._P_eval_t = torch.as_tensor(self._P_eval, dtype=self.torch_dtype, device=self.device)
 
     def set_w_eval(self, w_eval: Optional[np.ndarray] = None):
         """
@@ -533,9 +616,9 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
         t_ref_interp = np.linspace(0.0,1.0,4*self.nsegs+1)[1:-1]
         pos_ref_interp = _interp1d_torch(
-            torch.as_tensor(t_ref_interp,dtype=torch.float64,device=self.device),
-            torch.as_tensor(t_ref,dtype=torch.float64,device=self.device),
-            torch.as_tensor(pos_ref,dtype=torch.float64,device=self.device)
+            torch.as_tensor(t_ref_interp, dtype=self.torch_dtype, device=self.device),
+            torch.as_tensor(t_ref, dtype=self.torch_dtype, device=self.device),
+            torch.as_tensor(pos_ref, dtype=self.torch_dtype, device=self.device)
             ).cpu().numpy()
         P_ref_interp0 = self._get_basis_values(t_ref_interp)[0]
 
@@ -622,12 +705,12 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         """        
         if coefs is not None:
             self.coefs=coefs
-            self.coefs_t = torch.as_tensor(self.coefs,dtype=torch.float64,device=self.device)
+            self.coefs_t = torch.as_tensor(self.coefs, dtype=self.torch_dtype, device=self.device)
         if angs is not None:
             self.angs = angs
         R=self._get_rot_mats()
         self.coefs[-1]=self._coefs0[-1]@R[0]@R[1]@R[2]
-        self.coefs_t[-1].copy_(torch.as_tensor(self.coefs[-1],dtype=torch.float64,device=self.device))
+        self.coefs_t[-1].copy_(torch.as_tensor(self.coefs[-1], dtype=self.torch_dtype, device=self.device))
 
     def _get_positions_torch(self, P_t: torch.Tensor, nu=0) -> torch.Tensor:
         return torch.tensordot(P_t[nu].T.contiguous(),self.coefs_t,1)
@@ -770,66 +853,27 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         return np.hstack([np.ravel(c) for c in consts]).astype(np.float64)
 
     @cached_property
+    def _e_f_ends(self):
+        forces = np.empty([self._nimages, self.natoms, 3])
+        energies = np.empty(self._nimages)
+
+        idxs = [0,self._nimages-1]
+
+        self._get_forces_by_img_idxs(idxs,energies,forces)
+
+        return energies[idxs], forces[idxs]
+
+
+    @cached_property
     def _f_ends(self):
-        forces = np.empty((2, self.natoms, 3))
-        if not self.parallel:
-            forces[0]=self.images[0].get_forces()
-            forces[1]=self.images[-1].get_forces()
-        elif self._world.size==1:
-            def run(image, forces):
-                forces[:] = image.get_forces()
-            images=[self.images[0],self.images[-1]]
-            threads = [threading.Thread(target=run,
-                                        args=(images[i],
-                                              forces[i:i+1]))
-                       for i in range(2)]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join()
-        else:
-            nmv = len(self.images)-2
-            i = self._world.rank * nmv // self._world.size
-            try:
-                if i==0:
-                    forces[0] = self.images[0].get_forces()
-                elif i==1:
-                    forces[-1] = self.images[-1].get_forces()
-            except Exception:
-                error = self._world.sum(1.0)
-                raise
-            else:
-                error = self._world.sum(0.0)
-                if error:
-                    raise RuntimeError('Parallel DMF failed!')
+        e, f = self._e_f_ends
+        return f
 
-            root0 = 0
-            root1 = self._world.size // nmv
-            self._world.broadcast(forces[0], root0)
-            self._world.broadcast(forces[-1], root1)
-
-        return forces
 
     @cached_property
     def _e_ends(self):
-        f=self._f_ends
-        energies = np.empty(2)
-        if (not self.parallel) or self._world.size==1:
-            energies[0] = self.images[0].get_potential_energy()
-            energies[1] = self.images[-1].get_potential_energy()
-        else:
-            nmv = len(self.images)-2
-            root0 = 0
-            root1 = self._world.size // nmv
-            if self._world.rank == root0:
-                energies[0] = self.images[0].get_potential_energy()
-            elif self._world.rank == root1:
-                energies[1] = self.images[-1].get_potential_energy()
-
-            self._world.broadcast(energies[0:1], root0)
-            self._world.broadcast(energies[1:2], root1)
-
-        return energies
+        e, f = self._e_f_ends
+        return e
 
 
     @cached_property
@@ -841,48 +885,15 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         return float(np.amin(self._e_ends))
 
     def get_forces(self) -> np.ndarray:
-        """
-        Evaluate forces and energies for all images along the path.
-
-        For each image at ``t = t_eval[i]``, this method computes the atomic
-        forces and potential energy using the calculator attached to the
-        corresponding ``ase.Atoms`` object.  Forces and energies at the
-        endpoints are obtained from cached values (``_f_ends`` and ``_e_ends``)
-        with a small tolerance region near ``t = 0`` and ``t = 1``.  Interior
-        images are evaluated serially, using threads, or using MPI depending
-        on the settings of ``parallel`` and ``world``.
-
-        After calling this method, the arrays ``self.forces`` and
-        ``self.energies`` are updated in place.
-
-        Returns
-        -------
-        ndarray
-            Array of shape ``(len(t_eval), natoms, 3)`` containing the forces
-            for all images along the current path.
-
-        Notes
-        -----
-        - Endpoint forces are stored in ``_f_ends`` and are reused for
-          ``t < eps_t`` and ``t > 1 - eps_t``.
-
-        - If ``remove_rotation_and_translation`` is enabled, forces at the
-          final endpoint are rotated to match the aligned coordinate frame.
-
-        - When MPI is used, each rank evaluates a subset of interior images;
-          results are broadcast so that all ranks obtain full arrays.
-
-        """
         eps_t=0.01
         eps_w=0.001
 
-
-        forces = np.empty([self.t_eval.size, self.natoms, 3])
-        energies = np.empty(self.t_eval.size)
+        forces = np.empty([self._nimages, self.natoms, 3])
+        energies = np.empty(self._nimages)
         e0 = self.e0
 
-        inds=[]
-        for i in range(self.t_eval.size):
+        idxs=[]
+        for i in range(self._nimages):
             if self.t_eval[i]<eps_t:
                 forces[i] = self._f_ends[0]
                 energies[i] = self._e_ends[0]
@@ -892,14 +903,20 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
                 forces[i] = f@R[0]@R[1]@R[2]
                 energies[i] = self._e_ends[1]
             else:
-                inds.append(i)
+                idxs.append(i)
 
-        if not self.parallel:
-            for i in inds:
-                forces[i] = self.images[i].get_forces()
-                energies[i] = self.images[i].get_potential_energy()
+        self._get_forces_by_img_idxs(idxs,energies,forces)
 
-        elif self._world.size==1:
+
+        self.energies = energies
+        self.forces = forces
+
+        return forces
+
+
+    def _get_forces_by_img_idxs(self,idxs,energies,forces):
+        if self.parallel and self._world is None:
+
             def run(image, energies, forces):
                 forces[:] = image.get_forces()
                 energies[:] = image.get_potential_energy()
@@ -908,37 +925,70 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
                                         args=(self.images[i],
                                               energies[i:i+1],
                                               forces[i:i+1]))
-                       for i in inds]
+                       for i in idxs]
+
             for thread in threads:
                 thread.start()
             for thread in threads:
                 thread.join()
 
+        elif self.parallel == 'mpi':
+
+            self._get_forces_by_img_idxs_mpi(idxs,energies,forces)
+
         else:
-            nmv = len(self.images)-2
-            i = self._world.rank * nmv // self._world.size + 1
-            try:
+
+            for i in idxs:
                 forces[i] = self.images[i].get_forces()
                 energies[i] = self.images[i].get_potential_energy()
-            except Exception:
-                error = self._world.sum(1.0)
-                raise
-            else:
-                error = self._world.sum(0.0)
-                if error:
-                    raise RuntimeError('Parallel DMF failed!')
-
-            for i in range(1,nmv+1):
-                root = (i-1) * self._world.size // nmv
-                self._world.broadcast(energies[i:i + 1], root)
-                self._world.broadcast(forces[i], root)
 
 
-        self.energies = energies
-        self.forces = forces
+    def _get_forces_by_img_idxs_mpi(self,idxs,energies,forces):
+
+        world = self._world
+        size  = self._size
+        workers = list(range(1, size))
+
+        temp_r2i = defaultdict(list)
+        s_idxs = set(idxs)
+        for r,idxs_r in self._r2i.items():
+            temp_idxs_r = sorted(s_idxs & set(idxs_r))
+            if temp_idxs_r:
+                temp_r2i[r] = temp_idxs_r
+
+        pos = self.get_positions()
+
+        results = {}
+
+        for r,idxs_r in temp_r2i.items():
+            if r>0:
+                send_dict = {i: pos[i] for i in idxs_r}
+                world.send(("DO", send_dict), dest=r)
+
+        my_results = {}
+        for i in temp_r2i[0]:
+            image = self.images[i]
+            F = image.get_forces()
+            E = image.get_potential_energy()
+            my_results[i] = {"E": E, "F": F}
+
+        results.update(my_results)
 
 
-        return forces
+        for r in temp_r2i:
+            if r>0:
+                cmd, payload = world.recv(source=r)
+                assert cmd == "RESULT"
+                results.update(payload)
+
+        for i,v in results.items():
+            energies[i] = v["E"]
+            forces[i] = v["F"]
+
+
+    def stop_mpi(self):
+        for r in range(1, self._size):
+            self._world.send(("STOP", None), dest=r)
 
     @abstractmethod
     def _get_objective(self) -> float:
@@ -1051,23 +1101,23 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         # Avoid division-by-zero in pathological trial steps (e.g., collapsed segments)
         norm_dx = torch.clamp(norm_dx, min=1.0e-12)
         dt = torch.as_tensor(
-            self.t_vel[1:]-self.t_vel[:-1],dtype=torch.float64,device=self.device)
+            self.t_vel[1:]-self.t_vel[:-1], dtype=self.torch_dtype, device=self.device)
 
-        t_fd_vel = torch.zeros(self.t_vel.size+1,dtype=torch.float64,device=self.device)
+        t_fd_vel = torch.zeros(self.t_vel.size+1, dtype=self.torch_dtype, device=self.device)
         t_fd_vel[1:-1] = 0.5*(
-            torch.as_tensor(self.t_vel[1:],dtype=torch.float64,device=self.device)
-            + torch.as_tensor(self.t_vel[:-1],dtype=torch.float64,device=self.device))
-        t_fd_vel[-1] = torch.tensor(1.0,dtype=torch.float64,device=self.device)
+            torch.as_tensor(self.t_vel[1:], dtype=self.torch_dtype, device=self.device)
+            + torch.as_tensor(self.t_vel[:-1], dtype=self.torch_dtype, device=self.device))
+        t_fd_vel[-1] = torch.tensor(1.0, dtype=self.torch_dtype, device=self.device)
 
         if nu==0:
-            fd_vels = torch.zeros(self.t_vel.size + 1,dtype=torch.float64,device=self.device)
+            fd_vels = torch.zeros(self.t_vel.size + 1, dtype=self.torch_dtype, device=self.device)
             fd_vels[1:-1] = norm_dx/dt
             fd_vels[0] = fd_vels[1]
             fd_vels[-1] = fd_vels[-2]
 
             del pos_t, diffs, norm_dx, dt; torch.cuda.empty_cache()
             return _interp1d_torch(
-                torch.as_tensor(self.t_eval,dtype=torch.float64,device=self.device),
+                torch.as_tensor(self.t_eval, dtype=self.torch_dtype, device=self.device),
                 t_fd_vel,fd_vels).cpu().numpy()
         else:
             diff_P_vel0 = self._P_vel_t[0,:,1:]-self._P_vel_t[0,:,:-1]
@@ -1079,14 +1129,14 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
                 diffs)
             grad_fd_vels = torch.zeros(
                 [self.t_vel.size+1,self.nbasis,self.natoms,3],
-                dtype=torch.float64,device=self.device)
+                dtype=self.torch_dtype, device=self.device)
             grad_fd_vels[1:-1] = grad_norm_vel
             grad_fd_vels[0] = grad_norm_vel[0]
             grad_fd_vels[-1] = grad_norm_vel[-1]
 
             del pos_t, diffs, norm_dx, dt, diff_P_vel0, grad_norm_vel; torch.cuda.empty_cache()
             return _interp1d_torch(
-                torch.as_tensor(self.t_eval,dtype=torch.float64,device=self.device),
+                torch.as_tensor(self.t_eval, dtype=self.torch_dtype, device=self.device),
                 t_fd_vel,grad_fd_vels).cpu().numpy()
 
     @torch.no_grad()
@@ -1614,8 +1664,7 @@ class DirectMaxFlux(VariationalPathOpt):
         Default: False.
 
     world : MPI communicator, optional
-        Communicator used when ``parallel=True``. Defaults to
-        ``ase.parallel.world``.
+        Communicator used when ``parallel=True``. Default: None.
 
     t_eval : ndarray of shape ``(nmove+2,)``, optional
         **Initial** evaluation points in \( t \in [0,1] \).  
@@ -1669,6 +1718,9 @@ class DirectMaxFlux(VariationalPathOpt):
 
     device : str or torch.device, optional
         Torch device for internal tensors. If None, auto-select.
+    dtype : str or torch.dtype, optional
+        Torch floating-point dtype for internal calculations
+        (``float32`` or ``float64``). Default: ``float64``.
 
 
     Attributes
@@ -1765,6 +1817,7 @@ class DirectMaxFlux(VariationalPathOpt):
         coefs=None, nsegs: int = 4, dspl: int = 3,
         remove_rotation_and_translation: bool = True,
         mass_weighted: bool = False,
+        calc_factory=None,
         parallel: bool = False, world=None,
         t_eval: Optional[np.ndarray] = None,
         w_eval: Optional[np.ndarray] = None,
@@ -1778,14 +1831,15 @@ class DirectMaxFlux(VariationalPathOpt):
         update_teval: bool = False,
         params_t_update: Optional[dict] = None,
         device=None,
+        dtype=None,
         ):
 
         args = locals()
         base_params = [
             'ref_images','coefs','nsegs','dspl',
             'remove_rotation_and_translation','mass_weighted',
-            'parallel','world','t_eval','w_eval','n_vel',
-            'n_trans','n_rot','eps_vel','eps_rot','device']
+            'calc_factory','parallel','world','t_eval','w_eval','n_vel',
+            'n_trans','n_rot','eps_vel','eps_rot','device','dtype']
         base_args = {k:args[k] for k in base_params}
 
         if params_t_update is None:

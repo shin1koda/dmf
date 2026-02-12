@@ -91,22 +91,22 @@ Running the script produces several output files, including:
  - `sample_tmax.traj`: History of the estimated highest-energy point during optimization
 
 
-## torch_dmf (GPU acceleration)
+## dmf.torch (GPU acceleration)
 
-`torch_dmf` is a PyTorch-accelerated backend that mirrors the `dmf` API while offloading internal tensor operations to PyTorch (CUDA when available).
+`dmf.torch` is a PyTorch-accelerated backend that mirrors the `dmf` API while offloading internal tensor operations to PyTorch (CUDA when available).
 
-If you want to use `torch_dmf`, install a CUDA-matched build of PyTorch before installing PyDMF.  
+If you want to use `dmf.torch`, install a CUDA-matched build of PyTorch before installing PyDMF.  
 Example for CUDA 12.8:
 
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cu128
-pip install git+https://github.com/t-0hmura/dmf.git
+pip install "pydmf[torch]"
 ```
 
-To use the PyTorch backend, replace `dmf` with `torch_dmf` in your imports. The rest of the API is unchanged:   
+To use the PyTorch backend, import from `dmf.torch`. The rest of the API is unchanged:   
 
 ```python
-from torch_dmf import DirectMaxFlux, interpolate_fbenm
+from dmf.torch import DirectMaxFlux, interpolate_fbenm
 ```
 
 You can optionally specify the CUDA device in entry points such as `DirectMaxFlux` and `interpolate_fbenm`:
@@ -163,4 +163,3 @@ We will do our best to provide guidance based on availability.
 ## License
 
 This project is distributed under the MIT License.
-

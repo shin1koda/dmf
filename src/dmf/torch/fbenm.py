@@ -9,7 +9,6 @@ from ase.data.vdw_alvarez import vdw_radii
 import torch
 import warnings
 
-
 def _resolve_torch_device(device_spec):
     """
     Resolve a torch device from a user spec.
@@ -20,17 +19,48 @@ def _resolve_torch_device(device_spec):
         try:
             d = torch.device(device_spec)
         except (TypeError, ValueError):
-            warnings.warn(f"[torch_dmf] Invalid device spec '{device_spec}', falling back to CPU.")
+            warnings.warn(f"[dmf.torch] Invalid device spec '{device_spec}', falling back to CPU.")
             d = torch.device("cpu")
     if d.type == "cuda" and not torch.cuda.is_available():
-        warnings.warn("[torch_dmf] CUDA requested but not available; falling back to CPU.")
+        warnings.warn("[dmf.torch] CUDA requested but not available; falling back to CPU.")
         d = torch.device("cpu")
     return d
 
 
+def _resolve_torch_dtype(dtype_spec):
+    """
+    Resolve a torch dtype from a user spec (float32/float64).
+    """
+    if dtype_spec is None:
+        return torch.float64
+    if isinstance(dtype_spec, torch.dtype):
+        if dtype_spec in (torch.float32, torch.float64):
+            return dtype_spec
+        warnings.warn(f"[dmf.torch] Unsupported dtype '{dtype_spec}', falling back to float64.")
+        return torch.float64
+    if isinstance(dtype_spec, str):
+        key = dtype_spec.strip().lower()
+        if key in ("float32", "fp32", "single", "float"):
+            return torch.float32
+        if key in ("float64", "fp64", "double"):
+            return torch.float64
+        warnings.warn(f"[dmf.torch] Invalid dtype spec '{dtype_spec}', falling back to float64.")
+        return torch.float64
+    try:
+        np_dtype = np.dtype(dtype_spec)
+        if np_dtype == np.float32:
+            return torch.float32
+        if np_dtype == np.float64:
+            return torch.float64
+    except Exception:
+        pass
+    warnings.warn(f"[dmf.torch] Invalid dtype spec '{dtype_spec}', falling back to float64.")
+    return torch.float64
+
+
 @torch.no_grad()
-def _calc_dist_mat(pos, *, device) -> torch.Tensor:
-    pos_t = torch.as_tensor(pos,dtype=torch.float64,device=device)
+def _calc_dist_mat(pos, *, device, dtype) -> torch.Tensor:
+    pos_t = torch.as_tensor(pos, dtype=dtype, device=device)
     return torch.cdist(pos_t,pos_t)
 
 
@@ -62,6 +92,9 @@ class FB_ENM(Calculator):
         If True, include ``emat_rep`` and ``emat_att`` in results.
     device : str or torch.device, optional
         Torch device used only for the distance-matrix evaluation.
+    dtype : str or torch.dtype, optional
+        Torch floating-point dtype for internal calculations
+        (``float32`` or ``float64``). Default: ``float64``.
 
     """
 
@@ -76,16 +109,23 @@ class FB_ENM(Calculator):
         delta_scale: float = 0.2,
         return_energy_mats: bool = False,
         device=None,
+        dtype=None,
     ):
         super().__init__()
 
         self.device = _resolve_torch_device(device)
+        self.torch_dtype = _resolve_torch_dtype(dtype)
+        self.np_dtype = np.float32 if self.torch_dtype == torch.float32 else np.float64
         self._return_energy_mats = bool(return_energy_mats)
+        self._d_min_t = None
+        self._d_max_t = None
+        self._delta_min_t = None
+        self._delta_max_t = None
 
         def to_np(x) -> np.ndarray:
             if isinstance(x, torch.Tensor):
-                return x.detach().cpu().numpy().astype(np.float64, copy=False)
-            return np.asarray(x, dtype=np.float64)
+                return x.detach().cpu().numpy().astype(self.np_dtype, copy=False)
+            return np.asarray(x, dtype=self.np_dtype)
 
         d_min_np = to_np(d_min).copy()
         d_max_np = to_np(d_max).copy()
@@ -116,45 +156,57 @@ class FB_ENM(Calculator):
     def calculate(self, atoms, properties, system_changes):
         super().calculate(atoms, properties, system_changes)
 
-        # 1) Distance matrix (Torch on self.device), then move to CPU
+        # 1) Distance matrix (Torch on self.device)
         pos = atoms.get_positions()
-        d_cpu = _calc_dist_mat(pos, device=self.device).cpu().numpy()
+        pos_t = torch.as_tensor(pos, dtype=self.torch_dtype, device=self.device)
+        d = torch.cdist(pos_t, pos_t)
 
-        # 2) Flat-bottom penalties (NumPy on CPU)
-        d_rep = np.minimum(0.0, d_cpu - self.d_min)
-        d_att = np.maximum(0.0, d_cpu - self.d_max)
+        # Cache torch copies of constants on the target device/dtype
+        if (self._d_min_t is None) or (self._d_min_t.device != self.device) or (self._d_min_t.dtype != self.torch_dtype):
+            self._d_min_t = torch.as_tensor(self.d_min, dtype=self.torch_dtype, device=self.device)
+        if (self._d_max_t is None) or (self._d_max_t.device != self.device) or (self._d_max_t.dtype != self.torch_dtype):
+            self._d_max_t = torch.as_tensor(self.d_max, dtype=self.torch_dtype, device=self.device)
+        if (self._delta_min_t is None) or (self._delta_min_t.device != self.device) or (self._delta_min_t.dtype != self.torch_dtype):
+            self._delta_min_t = torch.as_tensor(self.delta_min, dtype=self.torch_dtype, device=self.device)
+        if (self._delta_max_t is None) or (self._delta_max_t.device != self.device) or (self._delta_max_t.dtype != self.torch_dtype):
+            self._delta_max_t = torch.as_tensor(self.delta_max, dtype=self.torch_dtype, device=self.device)
 
-        inv_dmin2 = 1.0 / (self.delta_min * self.delta_min)
-        inv_dmax2 = 1.0 / (self.delta_max * self.delta_max)
+        # 2) Flat-bottom penalties (Torch on device)
+        d_rep = torch.clamp(d - self._d_min_t, max=0.0)
+        d_att = torch.clamp(d - self._d_max_t, min=0.0)
+
+        inv_dmin2 = 1.0 / (self._delta_min_t * self._delta_min_t)
+        inv_dmax2 = 1.0 / (self._delta_max_t * self._delta_max_t)
 
         if self._return_energy_mats:
             e_rep = (d_rep * d_rep) * inv_dmin2
             e_att = (d_att * d_att) * inv_dmax2
             # symmetric matrix -> half to count each pair once
-            energy = 0.5 * float(np.sum(e_rep + e_att))
+            energy = 0.5 * torch.sum(e_rep + e_att)
         else:
-            energy = 0.5 * float(np.sum((d_rep * d_rep) * inv_dmin2 + (d_att * d_att) * inv_dmax2))
+            energy = 0.5 * torch.sum((d_rep * d_rep) * inv_dmin2 + (d_att * d_att) * inv_dmax2)
 
         # dE/dd  (up to a sign handled in force assembly)
         f1 = 2.0 * (d_rep * inv_dmin2 + d_att * inv_dmax2)
 
-        # 3) Forces (NumPy, CPU)
+        # 3) Forces (Torch on device)
         # Avoid divide-by-zero on diagonal; diagonal term is zero anyway.
-        np.fill_diagonal(d_cpu, 1.0)
-        f1 /= d_cpu
+        d.fill_diagonal_(1.0)
+        f1 = f1 / d
         # Ensure exact zeros on diagonal
-        np.fill_diagonal(f1, 0.0)
+        f1.fill_diagonal_(0.0)
 
         # Vectorized assembly:
         # F_i = sum_j (f1_ij * (r_j - r_i))
-        s = np.sum(f1, axis=1)  # (N,)
-        forces = f1 @ pos - pos * s[:, None]  # (N,3)
+        s = torch.sum(f1, dim=1)  # (N,)
+        forces = f1 @ pos_t - pos_t * s[:, None]  # (N,3)
 
         self.results = {
-            'energy': float(energy),
-            'forces': forces,
+            'energy': float(energy.item()),
+            'forces': forces.cpu().numpy(),
         }
         if self._return_energy_mats:
+            # Keep energy matrices on device to avoid host transfer
             self.results['emat_rep'] = e_rep
             self.results['emat_att'] = e_att
 
@@ -215,6 +267,9 @@ class FB_ENM_Bonds(FB_ENM):
         Default: None.
     device : str or torch.device, optional
         Torch device for internal tensors. If None, auto-select.
+    dtype : str or torch.dtype, optional
+        Torch floating-point dtype for internal calculations
+        (``float32`` or ``float64``). Default: ``float64``.
 
     Notes
     -----
@@ -237,11 +292,13 @@ class FB_ENM_Bonds(FB_ENM):
         d_max_overwrite: Optional[np.ndarray] = None,
         A_overwrite: Optional[np.ndarray] = None,
         device=None,
+        dtype=None,
     ):
-
         self.device = _resolve_torch_device(device)
+        self.torch_dtype = _resolve_torch_dtype(dtype)
+        self.np_dtype = np.float32 if self.torch_dtype == torch.float32 else np.float64
         _dev = self.device
-        _tdt = torch.float64
+        _tdt = self.torch_dtype
 
         numbers = images[0].arrays['numbers']
         r_cov_np = covalent_radii[numbers][:,None]+covalent_radii[numbers]
@@ -255,7 +312,7 @@ class FB_ENM_Bonds(FB_ENM):
 
         if fix_planes:
             addA_p = torch.zeros([natoms,natoms],dtype=torch.bool,device=_dev)
-            planes = _get_planes(images,bond_scale=bond_scale,device=self.device)
+            planes = _get_planes(images, bond_scale=bond_scale, device=self.device, dtype=self.torch_dtype)
             for p in planes:
                 idx = torch.as_tensor(p,device=_dev)
                 addA_p[idx.unsqueeze(1),idx] = True
@@ -270,7 +327,7 @@ class FB_ENM_Bonds(FB_ENM):
 
         with torch.no_grad():
             for image in images:
-                d = _calc_dist_mat(image.get_positions(),device=self.device)
+                d = _calc_dist_mat(image.get_positions(), device=self.device, dtype=self.torch_dtype)
                 J = (d/r_cov)<bond_scale_t
                 J_t = J.to(_tdt)
                 A = (J_t@J_t)>0
@@ -298,7 +355,7 @@ class FB_ENM_Bonds(FB_ENM):
                 d_max = torch.where(mask,torch.as_tensor(d_max_overwrite,dtype=_tdt,device=_dev),d_max)
 
         del numbers, r_cov_np, r_vdw_np, r_cov, r_vdw, bond_scale_t, natoms, addA_p, addA_mask, delA_mask; torch.cuda.empty_cache()
-        super().__init__(d_min,d_max,delta_scale=delta_scale,device=device)
+        super().__init__(d_min, d_max, delta_scale=delta_scale, device=device, dtype=self.torch_dtype)
         del d_min, d_max; torch.cuda.empty_cache()
 
 
@@ -359,6 +416,9 @@ class CFB_ENM(Calculator):
         Default: True.
     device : str or torch.device, optional
         Torch device for internal tensors. If None, auto-select.
+    dtype : str or torch.dtype, optional
+        Torch floating-point dtype for internal calculations
+        (``float32`` or ``float64``). Default: ``float64``.
 
     Notes
     -----
@@ -389,13 +449,14 @@ class CFB_ENM(Calculator):
         single: bool = True,
         remove_fourmembered: bool = True,
         device=None,
+        dtype=None,
     ):
 
         Calculator.__init__(self)
-
         self.device = _resolve_torch_device(device)
+        self.torch_dtype = _resolve_torch_dtype(dtype)
         _dev = self.device
-        _tdt = torch.float64
+        _tdt = self.torch_dtype
 
         numbers = images[0].arrays['numbers']
         r_cov_np = covalent_radii[numbers][:,None]+covalent_radii[numbers]
@@ -408,7 +469,7 @@ class CFB_ENM(Calculator):
 
         with torch.no_grad():
             for i,image in enumerate(images):
-                d = _calc_dist_mat(image.get_positions(),device=self.device)
+                d = _calc_dist_mat(image.get_positions(), device=self.device, dtype=self.torch_dtype)
                 J = (d/self.r_cov_t)<self.bond_scale_t
                 J.fill_diagonal_(False)
                 Js.append(J)
@@ -464,9 +525,9 @@ class CFB_ENM(Calculator):
             pivotal=True,single=True,remove_fourmembered=True):
 
         if isinstance(J_both,torch.Tensor):
-            J_both_t = J_both.to(dtype=torch.float32)
+            J_both_t = J_both.to(dtype=self.torch_dtype)
         else:
-            J_both_t = torch.as_tensor(J_both,dtype=torch.float32,device=self.device)
+            J_both_t = torch.as_tensor(J_both, dtype=self.torch_dtype, device=self.device)
         J2 = (J_both_t @ J_both_t) > 0
         J2 = J2.cpu().numpy()
         del J_both_t; torch.cuda.empty_cache()
@@ -532,11 +593,11 @@ class CFB_ENM(Calculator):
         natoms = len(atoms)
         if self.quartets_t.numel()==0:
             self.results = {'energy': 0.0,
-                            'forces': np.zeros([natoms,3])}
+                            'forces': np.zeros([natoms,3], dtype=self.np_dtype)}
             del natoms, r; torch.cuda.empty_cache()
             return
 
-        pos = torch.as_tensor(r,dtype=torch.float64,device=self.device)
+        pos = torch.as_tensor(r, dtype=self.torch_dtype, device=self.device)
         q = self.quartets_t
         i = q[:,0]; j = q[:,1]; k = q[:,2]; l = q[:,3]
 
@@ -558,7 +619,7 @@ class CFB_ENM(Calculator):
         ok = (dd0_ij>0.0)&(dd0_kl>0.0)&(pp>0.0)
         if not torch.any(ok):
             self.results = {'energy': 0.0,
-                            'forces': np.zeros([natoms,3])}
+                            'forces': np.zeros([natoms,3], dtype=self.np_dtype)}
             del natoms, pos, q, i, j, k, l, diff_ij, diff_kl, d_ij, d_kl, d00_ij, d00_kl, d10_ij, d10_kl, d20_ij, d20_kl, dd0_ij, dd0_kl, pp, ok; torch.cuda.empty_cache()
             return
 
@@ -580,7 +641,7 @@ class CFB_ENM(Calculator):
         v1 = (dd0_kl/d_ij).unsqueeze(1)*(diff_ij/dnm.unsqueeze(1))
         v2 = (dd0_ij/d_kl).unsqueeze(1)*(diff_kl/dnm.unsqueeze(1))
 
-        forces = torch.zeros([natoms,3],dtype=torch.float64,device=self.device)
+        forces = torch.zeros([natoms,3], dtype=self.torch_dtype, device=self.device)
         forces.index_add_(0,i,-alpha.unsqueeze(1)*v1)
         forces.index_add_(0,j, alpha.unsqueeze(1)*v1)
         forces.index_add_(0,k,-alpha.unsqueeze(1)*v2)
@@ -591,7 +652,7 @@ class CFB_ENM(Calculator):
         del natoms, pos, q, i, j, k, l, diff_ij, diff_kl, d_ij, d_kl, d00_ij, d00_kl, d10_ij, d10_kl, d20_ij, d20_kl, dd0_ij, dd0_kl, pp, dnm, eps, sqrt_pp2, alpha, v1, v2, forces; torch.cuda.empty_cache()
 
 
-def _get_planes(images, bond_scale=1.25, tol_rmsd=0.05, tol_ang=10.0, *, device=None):
+def _get_planes(images, bond_scale=1.25, tol_rmsd=0.05, tol_ang=10.0, *, device=None, dtype=None):
 
     def rmsd(pos,c4):
         x = pos[c4]
@@ -627,15 +688,16 @@ def _get_planes(images, bond_scale=1.25, tol_rmsd=0.05, tol_ang=10.0, *, device=
         return ret
 
     device = _resolve_torch_device(device)
-    bond_scale_t = torch.tensor(float(bond_scale),dtype=torch.float64,device=device)
+    torch_dtype = _resolve_torch_dtype(dtype)
+    bond_scale_t = torch.tensor(float(bond_scale), dtype=torch_dtype, device=device)
 
     for iimg, atoms in enumerate(images):
 
-        pos = torch.as_tensor(atoms.get_positions(),dtype=torch.float64,device=device)
+        pos = torch.as_tensor(atoms.get_positions(), dtype=torch_dtype, device=device)
         cov_radii = covalent_radii[atoms.arrays['numbers']]
-        r_cov = torch.as_tensor(cov_radii,dtype=torch.float64,device=device)
+        r_cov = torch.as_tensor(cov_radii, dtype=torch_dtype, device=device)
         r_cov = r_cov + r_cov.unsqueeze(1)
-        d = _calc_dist_mat(pos,device=device)
+        d = _calc_dist_mat(pos, device=device, dtype=torch_dtype)
         A = (d/r_cov)<bond_scale_t
         A.fill_diagonal_(False)
         nghs = []

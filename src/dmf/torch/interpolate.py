@@ -1,6 +1,5 @@
 import numpy as np
 from ase.calculators.mixing import SumCalculator
-from constraints import add_harmonic_constraints
 from .dmf import DirectMaxFlux
 from .fbenm import FB_ENM_Bonds, CFB_ENM
 
@@ -15,6 +14,7 @@ def interpolate_fbenm(
         cfbenm_options={},
         dmf_options={},
         device=None,
+        dtype=None,
         ):
     """
     Generate a plausible initial reaction path using FB-ENM or
@@ -53,6 +53,9 @@ def interpolate_fbenm(
         Keyword arguments forwarded to `DirectMaxFlux`.
     device : str or torch.device, optional
         Torch device for DMF/ENM. If None, auto-select.
+    dtype : str or torch.dtype, optional
+        Torch floating-point dtype for DMF/ENM calculations
+        (``float32`` or ``float64``). Default: ``float64``.
 
     Returns
     -------
@@ -79,10 +82,20 @@ def interpolate_fbenm(
         fbenm_options.pop('device',None)
         cfbenm_options.pop('device',None)
 
+    if dtype is None:
+        dtype = dmf_options.pop('dtype',dtype)
+        dtype = fbenm_options.pop('dtype',dtype)
+        dtype = cfbenm_options.pop('dtype',dtype)
+    else:
+        dmf_options.pop('dtype',None)
+        fbenm_options.pop('dtype',None)
+        cfbenm_options.pop('dtype',None)
+
     mxflx = DirectMaxFlux(ref_images,
                           nmove=nmove,
                           update_teval=False,
                           device=device,
+                          dtype=dtype,
                           **dmf_options)
 
     if fbenm_only_endpoints:
@@ -90,16 +103,15 @@ def interpolate_fbenm(
     else:
         fbenm_images = [image.copy() for image in ref_images]
 
-    for i,image in enumerate(mxflx.images):
+    for image in mxflx.images:
         if correlated:
             calcs = [
-                FB_ENM_Bonds(fbenm_images, device=device, **fbenm_options),
-                CFB_ENM(fbenm_images, device=device, **cfbenm_options),
+                FB_ENM_Bonds(fbenm_images, device=device, dtype=dtype, **fbenm_options),
+                CFB_ENM(fbenm_images, device=device, dtype=dtype, **cfbenm_options),
             ]
         else:
-            calcs = [FB_ENM_Bonds(fbenm_images, device=device, **fbenm_options)]
+            calcs = [FB_ENM_Bonds(fbenm_images, device=device, dtype=dtype, **fbenm_options)]
 
-        calcs = add_harmonic_constraints(image, calcs)
         if len(calcs) == 1:
             image.calc = calcs[0]
         else:

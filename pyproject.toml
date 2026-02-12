@@ -37,7 +37,7 @@ docs = [
     "sphinx-autodoc-typehints",
     "ghp-import",
 ]
-gpu = ["torch>=2.6.0"]
+torch = ["torch", "pandas"]
 
 
 [project.urls]
@@ -47,7 +47,6 @@ Issues = "https://github.com/shin1koda/dmf/issues"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
-py-modules = ["constraints"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,5 +1,6 @@
 import threading
 from abc import ABC, abstractmethod
+from collections import defaultdict
 
 import numpy as np
 from numpy.polynomial import polynomial as P
@@ -7,9 +8,16 @@ from scipy.interpolate import BSpline,interp1d
 from scipy.spatial.transform import Rotation
 import cyipopt
 
-import ase.parallel
 from functools import cached_property
 
+from .mpi_backend import _worker_loop
+try:
+    import os
+    os.environ['UCX_LOG_LEVEL'] = 'error'
+    from mpi4py import MPI
+    HAS_MPI4PY = True
+except ImportError:
+    HAS_MPI4PY = False
 
 class HistoryBase():
     """
@@ -111,8 +119,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
     remove_rotation_and_translation : bool, optional
         If True, remove global translational and rotational motion using
-        nonlinear constraints. Default: True. Automatically disabled when
-        atomic constraints are present on ``ref_images``.
+        nonlinear constraints. Default: True.
 
     mass_weighted : bool, optional
         If True, the velocity norm \( \vert \dot{x}(t) \vert \) uses mass-weighted
@@ -123,8 +130,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         Default: False.
 
     world : MPI communicator, optional
-        Communicator used when ``parallel=True``. Defaults to
-        ``ase.parallel.world``.
+        Communicator used when ``parallel=True``. Default: None.
 
     t_eval : ndarray, optional
         Energy evaluation points in \( t \in [0,1] \).  
@@ -240,11 +246,69 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         coefs=None, nsegs=4,dspl=3,
         remove_rotation_and_translation=True,
         mass_weighted=False,
+        calc_factory=None,
         parallel=False,world=None,
         t_eval=None,w_eval=None,
         n_vel=None,n_trans=None,n_rot=None,
         eps_vel=0.01,eps_rot=0.01,
         ):
+
+        #Prallel calculation
+        self.parallel = parallel
+
+        if parallel and (parallel == "mpi" or world is not None):
+            self.parallel = "mpi"
+            if not HAS_MPI4PY:
+                raise RuntimeError("MPI parallel calculation requires mpi4py.")
+
+            self._world = MPI.COMM_WORLD if world is None else world
+            self._rank = self._world.Get_rank()
+            self._size = self._world.Get_size()
+        else:
+            self._world = None
+            self._rank = 0
+            self._size = 1
+
+
+        #Initialize images
+        if t_eval is None:
+            self._nimages = 2*nsegs+1
+        else:
+            self._nimages = len(t_eval)
+
+        self.images=[]
+        for _ in range(self._nimages):
+            self.images.append(ref_images[0].copy())
+
+        r2i = defaultdict(list)
+        for i in range(self._nimages):
+            if i==0:
+                r = 0
+            elif i==self._nimages-1:
+                r = self._size-1
+            else:
+                r = (i-1)%self._size
+
+            r2i[r].append(i)
+
+        self._r2i = r2i
+
+        #calc_factory
+        self.calc_factory = calc_factory
+
+        if self.parallel == "mpi":
+            if self.calc_factory is None:
+                raise RuntimeError("parallel='mpi' requires calc_factory.")
+
+        if self.calc_factory is not None:
+            for i in self._r2i[self._rank]:
+                self.images[i].calc = self.calc_factory(i)
+
+        if self.parallel == "mpi" and self._rank>0:
+            _worker_loop(self._world, self.images)
+            import sys
+            sys.exit(0)
+
 
         #Atoms
         self.natoms = len(ref_images[0])
@@ -255,21 +319,10 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         self._mass_fracs = self._masses/np.sum(self._masses)
 
         #Constraints
-        has_constraints = any(
-            getattr(image, "constraints", None) for image in ref_images
-        )
-        if has_constraints:
-            remove_rotation_and_translation = False
-        self.remove_rotation_and_translation = remove_rotation_and_translation
+        self.remove_rotation_and_translation \
+            = remove_rotation_and_translation
         self.eps_vel = eps_vel
         self.eps_rot = eps_rot
-
-        #Prallel calculation
-        self.parallel = parallel
-
-        if world is None:
-            world = ase.parallel.world
-        self._world = world
 
         #B-spline basis functions
         self.nsegs = nsegs
@@ -286,6 +339,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         d1basis = [b.derivative(nu=1) for b in basis]
         d2basis = [b.derivative(nu=2) for b in basis]
         self._basis = [basis,d1basis,d2basis]
+
 
         #t-sequences
         if t_eval is None:
@@ -328,11 +382,8 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             self.coefs = self._get_coefs_from_ref_images(ref_images)
         self._coefs0 = self.coefs.copy()
 
-        #Initialize images
-        self.images=[]
-        for _ in range(self.t_eval.size):
-            self.images.append(ref_images[0].copy())
         self.set_positions()
+
 
         #Jacobian of the translation constraints
         self._jac_trans = np.einsum(
@@ -387,8 +438,8 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             'output_file':'pathopt.out',
             }
 
-        if self.parallel and self._world.size>1:
-            if self._world.rank > 0:
+        if self.parallel=='mpi':
+            if self._rank > 0:
                 defaults['print_level'] = 0
 
         self.ipopt_options = dict()
@@ -695,67 +746,29 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
     def _reshape_consts(self,consts):
         return np.hstack([np.ravel(c) for c in consts])
 
+
+    @cached_property
+    def _e_f_ends(self):
+        forces = np.empty([self._nimages, self.natoms, 3])
+        energies = np.empty(self._nimages)
+
+        idxs = [0,self._nimages-1]
+
+        self._get_forces_by_img_idxs(idxs,energies,forces)
+
+        return energies[idxs], forces[idxs]
+
+
     @cached_property
     def _f_ends(self):
-        forces = np.empty((2, self.natoms, 3))
-        if not self.parallel:
-            forces[0]=self.images[0].get_forces()
-            forces[1]=self.images[-1].get_forces()
-        elif self._world.size==1:
-            def run(image, forces):
-                forces[:] = image.get_forces()
-            images=[self.images[0],self.images[-1]]
-            threads = [threading.Thread(target=run,
-                                        args=(images[i],
-                                              forces[i:i+1]))
-                       for i in range(2)]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join()
-        else:
-            nmv = len(self.images)-2
-            i = self._world.rank * nmv // self._world.size
-            try:
-                if i==0:
-                    forces[0] = self.images[0].get_forces()
-                elif i==1:
-                    forces[-1] = self.images[-1].get_forces()
-            except Exception:
-                error = self._world.sum(1.0)
-                raise
-            else:
-                error = self._world.sum(0.0)
-                if error:
-                    raise RuntimeError('Parallel DMF failed!')
+        e, f = self._e_f_ends
+        return f
 
-            root0 = 0
-            root1 = self._world.size // nmv
-            self._world.broadcast(forces[0], root0)
-            self._world.broadcast(forces[-1], root1)
-
-        return forces
 
     @cached_property
     def _e_ends(self):
-        f=self._f_ends
-        energies = np.empty(2)
-        if (not self.parallel) or self._world.size==1:
-            energies[0] = self.images[0].get_potential_energy()
-            energies[1] = self.images[-1].get_potential_energy()
-        else:
-            nmv = len(self.images)-2
-            root0 = 0
-            root1 = self._world.size // nmv
-            if self._world.rank == root0:
-                energies[0] = self.images[0].get_potential_energy()
-            elif self._world.rank == root1:
-                energies[1] = self.images[-1].get_potential_energy()
-
-            self._world.broadcast(energies[0:1], root0)
-            self._world.broadcast(energies[1:2], root1)
-
-        return energies
+        e, f = self._e_f_ends
+        return e
 
 
     @cached_property
@@ -766,49 +779,17 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         """
         return np.amin(self._e_ends)
 
+
     def get_forces(self):
-        """
-        Evaluate forces and energies for all images along the path.
-
-        For each image at ``t = t_eval[i]``, this method computes the atomic
-        forces and potential energy using the calculator attached to the
-        corresponding ``ase.Atoms`` object.  Forces and energies at the
-        endpoints are obtained from cached values (``_f_ends`` and ``_e_ends``)
-        with a small tolerance region near ``t = 0`` and ``t = 1``.  Interior
-        images are evaluated serially, using threads, or using MPI depending
-        on the settings of ``parallel`` and ``world``.
-
-        After calling this method, the arrays ``self.forces`` and
-        ``self.energies`` are updated in place.
-
-        Returns
-        -------
-        ndarray
-            Array of shape ``(len(t_eval), natoms, 3)`` containing the forces
-            for all images along the current path.
-
-        Notes
-        -----
-        - Endpoint forces are stored in ``_f_ends`` and are reused for
-          ``t < eps_t`` and ``t > 1 - eps_t``.
-
-        - If ``remove_rotation_and_translation`` is enabled, forces at the
-          final endpoint are rotated to match the aligned coordinate frame.
-
-        - When MPI is used, each rank evaluates a subset of interior images;
-          results are broadcast so that all ranks obtain full arrays.
-
-        """
         eps_t=0.01
         eps_w=0.001
 
-
-        forces = np.empty([self.t_eval.size, self.natoms, 3])
-        energies = np.empty(self.t_eval.size)
+        forces = np.empty([self._nimages, self.natoms, 3])
+        energies = np.empty(self._nimages)
         e0 = self.e0
 
-        inds=[]
-        for i in range(self.t_eval.size):
+        idxs=[]
+        for i in range(self._nimages):
             if self.t_eval[i]<eps_t:
                 forces[i] = self._f_ends[0]
                 energies[i] = self._e_ends[0]
@@ -818,14 +799,20 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
                 forces[i] = f@R[0]@R[1]@R[2]
                 energies[i] = self._e_ends[1]
             else:
-                inds.append(i)
+                idxs.append(i)
 
-        if not self.parallel:
-            for i in inds:
-                forces[i] = self.images[i].get_forces()
-                energies[i] = self.images[i].get_potential_energy()
+        self._get_forces_by_img_idxs(idxs,energies,forces)
 
-        elif self._world.size==1:
+        self.energies = energies
+        self.forces = forces
+
+        return forces
+
+
+    def _get_forces_by_img_idxs(self,idxs,energies,forces):
+
+        if self.parallel and self._world is None:
+
             def run(image, energies, forces):
                 forces[:] = image.get_forces()
                 energies[:] = image.get_potential_energy()
@@ -834,37 +821,71 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
                                         args=(self.images[i],
                                               energies[i:i+1],
                                               forces[i:i+1]))
-                       for i in inds]
+                       for i in idxs]
+
             for thread in threads:
                 thread.start()
             for thread in threads:
                 thread.join()
 
+        elif self.parallel == 'mpi':
+
+            self._get_forces_by_img_idxs_mpi(idxs,energies,forces)
+
         else:
-            nmv = len(self.images)-2
-            i = self._world.rank * nmv // self._world.size + 1
-            try:
+
+            for i in idxs:
                 forces[i] = self.images[i].get_forces()
                 energies[i] = self.images[i].get_potential_energy()
-            except Exception:
-                error = self._world.sum(1.0)
-                raise
-            else:
-                error = self._world.sum(0.0)
-                if error:
-                    raise RuntimeError('Parallel DMF failed!')
-
-            for i in range(1,nmv+1):
-                root = (i-1) * self._world.size // nmv
-                self._world.broadcast(energies[i:i + 1], root)
-                self._world.broadcast(forces[i], root)
 
 
-        self.energies = energies
-        self.forces = forces
+    def _get_forces_by_img_idxs_mpi(self,idxs,energies,forces):
+
+        world = self._world
+        size  = self._size
+        workers = list(range(1, size))
+
+        temp_r2i = defaultdict(list)
+        s_idxs = set(idxs)
+        for r,idxs_r in self._r2i.items():
+            temp_idxs_r = sorted(s_idxs & set(idxs_r))
+            if temp_idxs_r:
+                temp_r2i[r] = temp_idxs_r
+
+        pos = self.get_positions()
+
+        results = {}
+
+        for r,idxs_r in temp_r2i.items():
+            if r>0:
+                send_dict = {i: pos[i] for i in idxs_r}
+                world.send(("DO", send_dict), dest=r)
+
+        my_results = {}
+        for i in temp_r2i[0]:
+            image = self.images[i]
+            F = image.get_forces()
+            E = image.get_potential_energy()
+            my_results[i] = {"E": E, "F": F}
+
+        results.update(my_results)
 
 
-        return forces
+        for r in temp_r2i:
+            if r>0:
+                cmd, payload = world.recv(source=r)
+                assert cmd == "RESULT"
+                results.update(payload)
+
+        for i,v in results.items():
+            energies[i] = v["E"]
+            forces[i] = v["F"]
+
+
+    def stop_mpi(self):
+        for r in range(1, self._size):
+            self._world.send(("STOP", None), dest=r)
+
 
     @abstractmethod
     def _get_objective(self):
@@ -1525,8 +1546,7 @@ class DirectMaxFlux(VariationalPathOpt):
         Default: False.
 
     world : MPI communicator, optional
-        Communicator used when ``parallel=True``. Defaults to
-        ``ase.parallel.world``.
+        Communicator used when ``parallel=True``. Default: None.
 
     t_eval : ndarray of shape ``(nmove+2,)``, optional
         **Initial** evaluation points in \( t \in [0,1] \).  
@@ -1673,6 +1693,7 @@ class DirectMaxFlux(VariationalPathOpt):
         coefs=None, nsegs=4,dspl=3,
         remove_rotation_and_translation=True,
         mass_weighted=False,
+        calc_factory=None,
         parallel=False,world=None,
         t_eval=None,w_eval=None,
         n_vel=None,n_trans=None,n_rot=None,
@@ -1690,6 +1711,7 @@ class DirectMaxFlux(VariationalPathOpt):
         base_params = [
             'ref_images','coefs','nsegs','dspl',
             'remove_rotation_and_translation','mass_weighted',
+            'calc_factory',
             'parallel','world','t_eval','w_eval','n_vel',
             'n_trans','n_rot','eps_vel','eps_rot']
         base_args = {k:args[k] for k in base_params}
@@ -1793,10 +1815,7 @@ class DirectMaxFlux(VariationalPathOpt):
 
             alpha = ca*self._max_alpha
             t_eval = self.t_eval.copy()
-            if temp_t_eval.size == t_eval[1:-1].size:
-                t_eval[1:-1] = (1.0-alpha)*t_eval[1:-1] + alpha*temp_t_eval
-                self.set_t_eval(t_eval)
-                self.set_w_eval()
+            t_eval[1:-1] = (1.0-alpha)*t_eval[1:-1] + alpha*temp_t_eval
 
             self.set_t_eval(t_eval)
             self.set_w_eval()
