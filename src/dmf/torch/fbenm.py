@@ -709,7 +709,7 @@ def _quartet_planarity_mask(
         xc = x - torch.mean(x, dim=1, keepdim=True)
         _, _, vh = torch.linalg.svd(xc, full_matrices=False)
         v = vh[:, -1, :]  # (B, 3)
-        d = torch.einsum("bij,bj->bi", xc, v)
+        d = torch.sum(xc * v.unsqueeze(1), dim=2)
         rmsd = torch.sqrt(torch.mean(d * d, dim=1))
         keep[i0:i1] = rmsd < tol
     return keep
@@ -746,7 +746,7 @@ def _quartet_chain_geom_masks(
         xc = x - torch.mean(x, dim=1, keepdim=True)
         _, _, vh = torch.linalg.svd(xc, full_matrices=False)
         v = vh[:, -1, :]
-        d = torch.einsum("bij,bj->bi", xc, v)
+        d = torch.sum(xc * v.unsqueeze(1), dim=2)
         rmsd = torch.sqrt(torch.mean(d * d, dim=1))
         plane_ok = rmsd < tol_rmsd_f
 
