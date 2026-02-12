@@ -5,7 +5,7 @@ from typing import Optional
 
 import numpy as np
 from numpy.polynomial import polynomial as P
-from scipy.interpolate import BSpline,interp1d
+from scipy.interpolate import BSpline
 from scipy.spatial.transform import Rotation
 import cyipopt
 
@@ -917,11 +917,9 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
     def get_forces(self) -> np.ndarray:
         eps_t=0.01
-        eps_w=0.001
 
         forces = np.empty([self._nimages, self.natoms, 3])
         energies = np.empty(self._nimages)
-        e0 = self.e0
 
         t = self.t_eval
         mask_head = t < eps_t
@@ -1887,7 +1885,27 @@ class DirectMaxFlux(VariationalPathOpt):
 
         self.nmove: int = int(nmove)
 
-        base_args.update(t_eval=np.linspace(0.0,1.0,nmove+2))
+        if t_eval is None or self.update_teval:
+            t_eval_init = np.linspace(0.0, 1.0, nmove + 2)
+        else:
+            t_eval_init = np.asarray(t_eval, dtype=np.float64)
+            if t_eval_init.ndim != 1:
+                raise ValueError("t_eval must be a 1D array.")
+            if t_eval_init.size != (nmove + 2):
+                raise ValueError(
+                    "len(t_eval) must be nmove + 2 "
+                    f"(got len(t_eval)={t_eval_init.size}, nmove={nmove})."
+                )
+            if not np.all(np.diff(t_eval_init) > 0.0):
+                raise ValueError("t_eval must be strictly increasing.")
+            if (t_eval_init[0] < 0.0) or (t_eval_init[-1] > 1.0):
+                raise ValueError(
+                    "t_eval must satisfy 0.0 <= t_eval[0] and t_eval[-1] <= 1.0."
+                )
+            if (not np.isclose(t_eval_init[0], 0.0)) or (not np.isclose(t_eval_init[-1], 1.0)):
+                raise ValueError("t_eval endpoints must be 0.0 and 1.0.")
+
+        base_args.update(t_eval=t_eval_init)
 
         super().__init__(**base_args)
 
@@ -2041,8 +2059,6 @@ class DirectMaxFlux(VariationalPathOpt):
             un_di = inf_du \
                 /self.ipopt_options['obj_scaling_factor'] \
                 /np.amax(self.var_scales)
-            tol_di = self.ipopt_options['dual_inf_tol'] \
-                /np.amax(self.var_scales)
 
             de   = self.params_t_update['de']
             dia  = self.params_t_update['dia']
@@ -2073,8 +2089,6 @@ class DirectMaxFlux(VariationalPathOpt):
             t_eval = self.t_eval.copy()
             if temp_t_eval.size == t_eval[1:-1].size:
                 t_eval[1:-1] = (1.0-alpha)*t_eval[1:-1] + alpha*temp_t_eval
-                self.set_t_eval(t_eval)
-                self.set_w_eval()
 
             self.set_t_eval(t_eval)
             self.set_w_eval()

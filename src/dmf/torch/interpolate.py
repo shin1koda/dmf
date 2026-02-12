@@ -33,10 +33,10 @@ def interpolate_fbenm(
         sequential=True,
         fbenm_only_endpoints=True,
         copy_calc0=True,
-        fbenm_options={},
-        cfbenm_options={},
-        dmf_options={},
-        ipopt_options={},
+        fbenm_options=None,
+        cfbenm_options=None,
+        dmf_options=None,
+        ipopt_options=None,
         ):
     """
     Generate a plausible initial reaction path using FB-ENM or
@@ -185,10 +185,10 @@ def interpolate_fbenm_new(
         sequential=True,
         fbenm_only_endpoints=True,
         copy_calc0=True,
-        fbenm_options={},
-        cfbenm_options={},
-        dmf_options={},
-        ipopt_options={},
+        fbenm_options=None,
+        cfbenm_options=None,
+        dmf_options=None,
+        ipopt_options=None,
         ):
     """
     Generate a plausible initial reaction path using FB-ENM or
