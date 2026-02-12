@@ -12,7 +12,7 @@ import cyipopt
 from functools import cached_property
 
 import torch
-import warnings
+from ._torch_config import _resolve_torch_device, _resolve_torch_dtype
 
 from ..mpi_backend import _worker_loop
 try:
@@ -22,54 +22,6 @@ try:
     HAS_MPI4PY = True
 except ImportError:
     HAS_MPI4PY = False
-
-def _resolve_torch_device(device_spec):
-    """
-    Resolve a torch device from a user spec.
-    """
-    if device_spec is None:
-        d = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    else:
-        try:
-            d = torch.device(device_spec)
-        except (TypeError, ValueError):
-            warnings.warn(f"[dmf.torch] Invalid device spec '{device_spec}', falling back to CPU.")
-            d = torch.device("cpu")
-    if d.type == "cuda" and not torch.cuda.is_available():
-        warnings.warn("[dmf.torch] CUDA requested but not available; falling back to CPU.")
-        d = torch.device("cpu")
-    return d
-
-
-def _resolve_torch_dtype(dtype_spec):
-    """
-    Resolve a torch dtype from a user spec (float32/float64).
-    """
-    if dtype_spec is None:
-        return torch.float64
-    if isinstance(dtype_spec, torch.dtype):
-        if dtype_spec in (torch.float32, torch.float64):
-            return dtype_spec
-        warnings.warn(f"[dmf.torch] Unsupported dtype '{dtype_spec}', falling back to float64.")
-        return torch.float64
-    if isinstance(dtype_spec, str):
-        key = dtype_spec.strip().lower()
-        if key in ("float32", "fp32", "single", "float"):
-            return torch.float32
-        if key in ("float64", "fp64", "double"):
-            return torch.float64
-        warnings.warn(f"[dmf.torch] Invalid dtype spec '{dtype_spec}', falling back to float64.")
-        return torch.float64
-    try:
-        np_dtype = np.dtype(dtype_spec)
-        if np_dtype.kind == "f" and np_dtype.itemsize == 4:
-            return torch.float32
-        if np_dtype.kind == "f" and np_dtype.itemsize == 8:
-            return torch.float64
-    except Exception:
-        pass
-    warnings.warn(f"[dmf.torch] Invalid dtype spec '{dtype_spec}', falling back to float64.")
-    return torch.float64
 
 
 @torch.no_grad()
@@ -784,15 +736,17 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         return torch.tensordot(P_t[nu].T.contiguous(),self.coefs_t,1)
 
     def _get_rot_mats(self) -> np.ndarray:
-        R=np.zeros([3,3,3])
-        for i in range(3):
-            j=(i+1)%3
-            k=(i+2)%3
-            R[i,i,i]= 1.0
-            R[i,j,j]= np.cos(self.angs[i])
-            R[i,j,k]=-np.sin(self.angs[i])
-            R[i,k,j]= np.sin(self.angs[i])
-            R[i,k,k]= np.cos(self.angs[i])
+        # Explicit vectorized construction of Rx, Ry, Rz from Euler angles.
+        s = np.sin(self.angs)
+        c = np.cos(self.angs)
+        R = np.array(
+            [
+                [[1.0, 0.0, 0.0], [0.0, c[0], -s[0]], [0.0, s[0], c[0]]],
+                [[c[1], 0.0, s[1]], [0.0, 1.0, 0.0], [-s[1], 0.0, c[1]]],
+                [[c[2], -s[2], 0.0], [s[2], c[2], 0.0], [0.0, 0.0, 1.0]],
+            ],
+            dtype=np.float64,
+        )
         return R
 
     def set_positions(self, coefs=None, angs=None):
@@ -879,21 +833,27 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         ).cpu().numpy()
 
     def _get_jac_fin_rot(self) -> np.ndarray:
-        R=self._get_rot_mats()
+        R = self._get_rot_mats()
+        s = np.sin(self.angs)
+        c = np.cos(self.angs)
 
-        dR=np.zeros([3,3,3])
-        for i in range(3):
-            j=(i+1)%3
-            k=(i+2)%3
-            dR[i,j,j]=-np.sin(self.angs[i])
-            dR[i,j,k]=-np.cos(self.angs[i])
-            dR[i,k,j]= np.cos(self.angs[i])
-            dR[i,k,k]=-np.sin(self.angs[i])
+        dR0 = np.array(
+            [[0.0, 0.0, 0.0], [0.0, -s[0], -c[0]], [0.0, c[0], -s[0]]],
+            dtype=np.float64,
+        )
+        dR1 = np.array(
+            [[-s[1], 0.0, c[1]], [0.0, 0.0, 0.0], [-c[1], 0.0, -s[1]]],
+            dtype=np.float64,
+        )
+        dR2 = np.array(
+            [[-s[2], -c[2], 0.0], [c[2], -s[2], 0.0], [0.0, 0.0, 0.0]],
+            dtype=np.float64,
+        )
 
-        jac_rot = np.empty([self.natoms,3,3])
-        jac_rot[...,0] = self._coefs0[-1]@dR[0]@R[1]@R[2]
-        jac_rot[...,1] = self._coefs0[-1]@R[0]@dR[1]@R[2]
-        jac_rot[...,2] = self._coefs0[-1]@R[0]@R[1]@dR[2]
+        jac_rot = np.empty([self.natoms, 3, 3], dtype=np.float64)
+        jac_rot[..., 0] = self._coefs0[-1] @ dR0 @ R[1] @ R[2]
+        jac_rot[..., 1] = self._coefs0[-1] @ R[0] @ dR1 @ R[2]
+        jac_rot[..., 2] = self._coefs0[-1] @ R[0] @ R[1] @ dR2
 
         return jac_rot
 
@@ -963,20 +923,24 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         energies = np.empty(self._nimages)
         e0 = self.e0
 
-        idxs=[]
-        for i in range(self._nimages):
-            if self.t_eval[i]<eps_t:
-                forces[i] = self._f_ends[0]
-                energies[i] = self._e_ends[0]
-            elif self.t_eval[i]>1.0-eps_t:
-                R=self._get_rot_mats()
-                f = self._f_ends[1]
-                forces[i] = f@R[0]@R[1]@R[2]
-                energies[i] = self._e_ends[1]
-            else:
-                idxs.append(i)
+        t = self.t_eval
+        mask_head = t < eps_t
+        mask_tail = t > 1.0 - eps_t
+        mask_mid = ~(mask_head | mask_tail)
 
-        self._get_forces_by_img_idxs(idxs,energies,forces)
+        if np.any(mask_head):
+            forces[mask_head] = self._f_ends[0]
+            energies[mask_head] = self._e_ends[0]
+
+        if np.any(mask_tail):
+            R = self._get_rot_mats()
+            f_end_rot = self._f_ends[1] @ R[0] @ R[1] @ R[2]
+            forces[mask_tail] = f_end_rot
+            energies[mask_tail] = self._e_ends[1]
+
+        idxs = np.flatnonzero(mask_mid).tolist()
+        if idxs:
+            self._get_forces_by_img_idxs(idxs,energies,forces)
 
 
         self.energies = energies
@@ -1325,20 +1289,18 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             'bi,bas,ias->i',
             P_eval1, coefs, forces)
 
-        t_pows = np.zeros([2*len(t_eval),4])
-        for i in range(4):
-            t_pows[::2,i] = t_eval**i
-            if i<3:
-                t_pows[1::2,i+1] = (i+1)*t_eval**i
+        # Vectorized assembly of cubic Hermite systems for each interval.
+        t0 = t_eval
+        t2 = t0 * t0
+        t3 = t2 * t0
+        rows_val = np.stack([np.ones_like(t0), t0, t2, t3], axis=1)
+        rows_der = np.stack([np.zeros_like(t0), np.ones_like(t0), 2.0 * t0, 3.0 * t2], axis=1)
 
-        ens_dens = np.zeros(2*len(t_eval))
-        ens_dens[::2] = energies
-        ens_dens[1::2] = d_energies
-
-        polys = np.zeros([len(t_eval)-1,4])
-        for i in range(len(t_eval)-1):
-            polys[i] = np.linalg.solve(
-                t_pows[2*i:2*i+4],ens_dens[2*i:2*i+4])
+        # For each segment i:
+        # A_i = [val(t_i), der(t_i), val(t_{i+1}), der(t_{i+1})], b_i = [E_i, dE_i, E_{i+1}, dE_{i+1}]
+        A = np.stack([rows_val[:-1], rows_der[:-1], rows_val[1:], rows_der[1:]], axis=1)
+        b = np.stack([energies[:-1], d_energies[:-1], energies[1:], d_energies[1:]], axis=1)
+        polys = np.linalg.solve(A, b[..., None])[..., 0]
 
         if d_energies[np.argmax(energies)]>0.0:
             imax = np.argmax(energies)

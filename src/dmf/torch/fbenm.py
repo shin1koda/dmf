@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional, Tuple, Union
 
 import numpy as np
 
@@ -7,55 +7,7 @@ from ase.data import covalent_radii
 from ase.data.vdw_alvarez import vdw_radii
 
 import torch
-import warnings
-
-def _resolve_torch_device(device_spec):
-    """
-    Resolve a torch device from a user spec.
-    """
-    if device_spec is None:
-        d = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    else:
-        try:
-            d = torch.device(device_spec)
-        except (TypeError, ValueError):
-            warnings.warn(f"[dmf.torch] Invalid device spec '{device_spec}', falling back to CPU.")
-            d = torch.device("cpu")
-    if d.type == "cuda" and not torch.cuda.is_available():
-        warnings.warn("[dmf.torch] CUDA requested but not available; falling back to CPU.")
-        d = torch.device("cpu")
-    return d
-
-
-def _resolve_torch_dtype(dtype_spec):
-    """
-    Resolve a torch dtype from a user spec (float32/float64).
-    """
-    if dtype_spec is None:
-        return torch.float64
-    if isinstance(dtype_spec, torch.dtype):
-        if dtype_spec in (torch.float32, torch.float64):
-            return dtype_spec
-        warnings.warn(f"[dmf.torch] Unsupported dtype '{dtype_spec}', falling back to float64.")
-        return torch.float64
-    if isinstance(dtype_spec, str):
-        key = dtype_spec.strip().lower()
-        if key in ("float32", "fp32", "single", "float"):
-            return torch.float32
-        if key in ("float64", "fp64", "double"):
-            return torch.float64
-        warnings.warn(f"[dmf.torch] Invalid dtype spec '{dtype_spec}', falling back to float64.")
-        return torch.float64
-    try:
-        np_dtype = np.dtype(dtype_spec)
-        if np_dtype.kind == "f" and np_dtype.itemsize == 4:
-            return torch.float32
-        if np_dtype.kind == "f" and np_dtype.itemsize == 8:
-            return torch.float64
-    except Exception:
-        pass
-    warnings.warn(f"[dmf.torch] Invalid dtype spec '{dtype_spec}', falling back to float64.")
-    return torch.float64
+from ._torch_config import _resolve_torch_device, _resolve_torch_dtype
 
 
 @torch.no_grad()
@@ -163,6 +115,22 @@ class FB_ENM(Calculator):
             dtype=self.torch_dtype,
         )
 
+    def _ensure_cached_constants(self):
+        specs = (
+            ("_d_min_t", self.d_min),
+            ("_d_max_t", self.d_max),
+            ("_delta_min_t", self.delta_min),
+            ("_delta_max_t", self.delta_max),
+        )
+        for attr, arr in specs:
+            t = getattr(self, attr)
+            if (t is None) or (t.device != self.device) or (t.dtype != self.torch_dtype):
+                setattr(
+                    self,
+                    attr,
+                    torch.as_tensor(arr, dtype=self.torch_dtype, device=self.device),
+                )
+
     @torch.no_grad()
     def calculate(self, atoms, properties, system_changes):
         super().calculate(atoms, properties, system_changes)
@@ -173,14 +141,7 @@ class FB_ENM(Calculator):
         d = torch.cdist(pos_t, pos_t)
 
         # Cache torch copies of constants on the target device/dtype
-        if (self._d_min_t is None) or (self._d_min_t.device != self.device) or (self._d_min_t.dtype != self.torch_dtype):
-            self._d_min_t = torch.as_tensor(self.d_min, dtype=self.torch_dtype, device=self.device)
-        if (self._d_max_t is None) or (self._d_max_t.device != self.device) or (self._d_max_t.dtype != self.torch_dtype):
-            self._d_max_t = torch.as_tensor(self.d_max, dtype=self.torch_dtype, device=self.device)
-        if (self._delta_min_t is None) or (self._delta_min_t.device != self.device) or (self._delta_min_t.dtype != self.torch_dtype):
-            self._delta_min_t = torch.as_tensor(self.delta_min, dtype=self.torch_dtype, device=self.device)
-        if (self._delta_max_t is None) or (self._delta_max_t.device != self.device) or (self._delta_max_t.dtype != self.torch_dtype):
-            self._delta_max_t = torch.as_tensor(self.delta_max, dtype=self.torch_dtype, device=self.device)
+        self._ensure_cached_constants()
 
         # 2) Flat-bottom penalties (Torch on device)
         d_rep = torch.clamp(d - self._d_min_t, max=0.0)
@@ -721,40 +682,106 @@ class CFB_ENM(Calculator):
         del natoms, pos, i, j, k, l, diff_ij, diff_kl, d_ij, d_kl, d00_ij, d00_kl, d10_ij, d10_kl, d20_ij, d20_kl, dd0_ij, dd0_kl, pp, dnm, eps, sqrt_pp2, alpha, v1, v2, forces
 
 
+@torch.no_grad()
+def _quartet_planarity_mask(
+    pos: torch.Tensor,
+    quartets_t: torch.Tensor,
+    tol_rmsd: float,
+    chunk_size: int = 32768,
+) -> torch.Tensor:
+    n = int(quartets_t.shape[0])
+    if n == 0:
+        return torch.zeros((0,), dtype=torch.bool, device=pos.device)
+
+    keep = torch.zeros((n,), dtype=torch.bool, device=pos.device)
+    tol = float(tol_rmsd)
+    for i0 in range(0, n, chunk_size):
+        i1 = min(i0 + chunk_size, n)
+        q = quartets_t[i0:i1]
+        x = pos[q]  # (B, 4, 3)
+        xc = x - torch.mean(x, dim=1, keepdim=True)
+        _, _, vh = torch.linalg.svd(xc, full_matrices=False)
+        v = vh[:, -1, :]  # (B, 3)
+        d = torch.einsum("bij,bj->bi", xc, v)
+        rmsd = torch.sqrt(torch.mean(d * d, dim=1))
+        keep[i0:i1] = rmsd < tol
+    return keep
+
+
+@torch.no_grad()
+def _quartet_chain_geom_masks(
+    pos: torch.Tensor,
+    quartets_t: torch.Tensor,
+    tol_rmsd: float,
+    tol_ang: float,
+    chunk_size: int = 32768,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    n = int(quartets_t.shape[0])
+    if n == 0:
+        empty = torch.zeros((0,), dtype=torch.bool, device=pos.device)
+        return empty, empty, empty
+
+    mask_plane = torch.zeros((n,), dtype=torch.bool, device=pos.device)
+    mask_not_linear = torch.zeros((n,), dtype=torch.bool, device=pos.device)
+    mask_cis = torch.zeros((n,), dtype=torch.bool, device=pos.device)
+
+    eps = torch.finfo(pos.dtype).eps
+    tol_rmsd_f = float(tol_rmsd)
+    # 180-angle > tol_ang  <=> angle < 180-tol_ang
+    cos_thr = float(np.cos(np.deg2rad(180.0 - float(tol_ang))))
+
+    for i0 in range(0, n, chunk_size):
+        i1 = min(i0 + chunk_size, n)
+        q = quartets_t[i0:i1]
+        x = pos[q]  # (B, 4, 3)
+
+        # Planarity via best-fit plane RMSD (same definition as previous implementation).
+        xc = x - torch.mean(x, dim=1, keepdim=True)
+        _, _, vh = torch.linalg.svd(xc, full_matrices=False)
+        v = vh[:, -1, :]
+        d = torch.einsum("bij,bj->bi", xc, v)
+        rmsd = torch.sqrt(torch.mean(d * d, dim=1))
+        plane_ok = rmsd < tol_rmsd_f
+
+        # Non-linearity from two internal angles (i-j-k and j-k-l).
+        v01 = x[:, 0, :] - x[:, 1, :]
+        v21 = x[:, 2, :] - x[:, 1, :]
+        v12 = x[:, 1, :] - x[:, 2, :]
+        v32 = x[:, 3, :] - x[:, 2, :]
+        cos0 = torch.sum(v01 * v21, dim=1) / (torch.linalg.norm(v01, dim=1) * torch.linalg.norm(v21, dim=1) + eps)
+        cos1 = torch.sum(v12 * v32, dim=1) / (torch.linalg.norm(v12, dim=1) * torch.linalg.norm(v32, dim=1) + eps)
+        not_linear_ok = (cos0 > cos_thr) & (cos1 > cos_thr)
+
+        # cis/trans from cosine of the dihedral angle.
+        b1 = x[:, 1, :] - x[:, 0, :]
+        b2 = x[:, 2, :] - x[:, 1, :]
+        b3 = x[:, 3, :] - x[:, 2, :]
+        n1 = torch.cross(b1, b2, dim=1)
+        n2 = torch.cross(b2, b3, dim=1)
+        cos_dih = torch.sum(n1 * n2, dim=1) / (torch.linalg.norm(n1, dim=1) * torch.linalg.norm(n2, dim=1) + eps)
+        cis_ok = cos_dih >= 0.0
+
+        mask_plane[i0:i1] = plane_ok
+        mask_not_linear[i0:i1] = not_linear_ok
+        mask_cis[i0:i1] = cis_ok
+
+    return mask_plane, mask_not_linear, mask_cis
+
+
+def _quartets_to_tensor(quartets: list, device: torch.device) -> torch.Tensor:
+    if len(quartets) == 0:
+        return torch.zeros((0, 4), dtype=torch.long, device=device)
+    return torch.as_tensor(quartets, dtype=torch.long, device=device)
+
+
+def _apply_mask_to_quartets(quartets: list, mask_t: torch.Tensor) -> list:
+    if len(quartets) == 0:
+        return []
+    idxs = torch.nonzero(mask_t, as_tuple=False).squeeze(1).cpu().tolist()
+    return [quartets[i] for i in idxs]
+
+
 def _get_planes(images, bond_scale=1.25, tol_rmsd=0.05, tol_ang=10.0, *, device=None, dtype=None):
-
-    def rmsd(pos,c4):
-        x = pos[c4]
-        cent = torch.mean(x,dim=0,keepdim=True)
-        _, _, vh = torch.linalg.svd(x-cent,full_matrices=False)
-        v = vh[-1,:]
-        d = torch.matmul(x-cent,v)
-        return torch.sqrt(torch.mean(d*d)).item()
-
-    def is_not_linear(atoms,c4):
-        ang0 = atoms.get_angle(*c4[0:3])
-        ang1 = atoms.get_angle(*c4[1:4])
-        return 180.0-ang0>tol_ang and 180.0-ang1>tol_ang
-
-    def is_cis(atoms,c4):
-        dh = atoms.get_dihedral(*c4)
-        return np.cos(np.pi/180*dh)>=0.0
-
-    def is_trans(atoms,c4):
-        dh = atoms.get_dihedral(*c4)
-        return np.cos(np.pi/180*dh)<0.0
-
-    def is_connected(nghs,c4):
-        ret = c4[0] in nghs[c4[1]]
-        ret = ret and c4[1] in nghs[c4[2]]
-        ret = ret and c4[2] in nghs[c4[3]]
-        return ret
-
-    def is_connected_center(nghs,c4):
-        ret = c4[0] in nghs[c4[1]]
-        ret = ret and c4[0] in nghs[c4[2]]
-        ret = ret and c4[0] in nghs[c4[3]]
-        return ret
 
     device = _resolve_torch_device(device)
     torch_dtype = _resolve_torch_dtype(dtype)
@@ -776,7 +803,8 @@ def _get_planes(images, bond_scale=1.25, tol_rmsd=0.05, tol_ang=10.0, *, device=
         if iimg==0:
             path = []
             c4s = []
-            def next(i):
+
+            def walk(i):
                 if i not in path:
                     path.append(i)
                     if len(path)==4:
@@ -784,11 +812,11 @@ def _get_planes(images, bond_scale=1.25, tol_rmsd=0.05, tol_ang=10.0, *, device=
                             c4s.append(list(path))
                     else:
                         for j in nghs[i]:
-                            next(j)
+                            walk(j)
                     path.pop()
 
             for i in range(len(atoms)):
-                next(i)
+                walk(i)
 
             c4s_center = []
             for i0 in range(len(atoms)):
@@ -797,35 +825,81 @@ def _get_planes(images, bond_scale=1.25, tol_rmsd=0.05, tol_ang=10.0, *, device=
                     for i1 in range(nngh):
                         for i2 in range(i1+1,nngh):
                             for i3 in range(i2+1,nngh):
-                                c4s_center.append([i0,
-                                                   nghs[i0][i1],
-                                                   nghs[i0][i2],
-                                                   nghs[i0][i3]])
+                                c4s_center.append([i0, nghs[i0][i1], nghs[i0][i2], nghs[i0][i3]])
 
-            pels_cis = [c4 for c4 in c4s if (rmsd(pos,c4)<tol_rmsd
-                                             and is_not_linear(atoms,c4)
-                                             and is_cis(atoms,c4))]
-            pels_trans = [c4 for c4 in c4s if (rmsd(pos,c4)<tol_rmsd
-                                             and is_not_linear(atoms,c4)
-                                             and is_trans(atoms,c4))]
-            pels_center = [c4 for c4 in c4s_center if (rmsd(pos,c4)<tol_rmsd)]
-            del pos, cov_radii, r_cov, d, A, nghs
+            q_chain = _quartets_to_tensor(c4s, device)
+            if q_chain.numel() > 0:
+                conn_chain = (
+                    A[q_chain[:, 0], q_chain[:, 1]]
+                    & A[q_chain[:, 1], q_chain[:, 2]]
+                    & A[q_chain[:, 2], q_chain[:, 3]]
+                )
+                plane_ok, not_linear_ok, cis_ok = _quartet_chain_geom_masks(
+                    pos, q_chain, tol_rmsd, tol_ang
+                )
+                chain_common = conn_chain & plane_ok & not_linear_ok
+                pels_cis = _apply_mask_to_quartets(c4s, chain_common & cis_ok)
+                pels_trans = _apply_mask_to_quartets(c4s, chain_common & (~cis_ok))
+            else:
+                pels_cis = []
+                pels_trans = []
+
+            q_center = _quartets_to_tensor(c4s_center, device)
+            if q_center.numel() > 0:
+                conn_center = (
+                    A[q_center[:, 0], q_center[:, 1]]
+                    & A[q_center[:, 0], q_center[:, 2]]
+                    & A[q_center[:, 0], q_center[:, 3]]
+                )
+                plane_center = _quartet_planarity_mask(pos, q_center, tol_rmsd)
+                pels_center = _apply_mask_to_quartets(c4s_center, conn_center & plane_center)
+            else:
+                pels_center = []
 
         else:
-            pels_cis = [c4 for c4 in pels_cis
-                           if (rmsd(pos,c4)<tol_rmsd
-                               and is_not_linear(atoms,c4)
-                               and is_cis(atoms,c4)
-                               and is_connected(nghs,c4))]
-            pels_trans = [c4 for c4 in pels_trans
-                             if (rmsd(pos,c4)<tol_rmsd
-                                 and is_not_linear(atoms,c4)
-                                 and is_trans(atoms,c4)
-                                 and is_connected(nghs,c4))]
-            pels_center = [c4 for c4 in pels_center
-                              if (rmsd(pos,c4)<tol_rmsd
-                                  and is_connected_center(nghs,c4))]
-            del pos, cov_radii, r_cov, d, A, nghs
+            q_cis = _quartets_to_tensor(pels_cis, device)
+            if q_cis.numel() > 0:
+                conn_cis = (
+                    A[q_cis[:, 0], q_cis[:, 1]]
+                    & A[q_cis[:, 1], q_cis[:, 2]]
+                    & A[q_cis[:, 2], q_cis[:, 3]]
+                )
+                plane_ok, not_linear_ok, cis_ok = _quartet_chain_geom_masks(
+                    pos, q_cis, tol_rmsd, tol_ang
+                )
+                pels_cis = _apply_mask_to_quartets(
+                    pels_cis, conn_cis & plane_ok & not_linear_ok & cis_ok
+                )
+            else:
+                pels_cis = []
+
+            q_trans = _quartets_to_tensor(pels_trans, device)
+            if q_trans.numel() > 0:
+                conn_trans = (
+                    A[q_trans[:, 0], q_trans[:, 1]]
+                    & A[q_trans[:, 1], q_trans[:, 2]]
+                    & A[q_trans[:, 2], q_trans[:, 3]]
+                )
+                plane_ok, not_linear_ok, cis_ok = _quartet_chain_geom_masks(
+                    pos, q_trans, tol_rmsd, tol_ang
+                )
+                pels_trans = _apply_mask_to_quartets(
+                    pels_trans, conn_trans & plane_ok & not_linear_ok & (~cis_ok)
+                )
+            else:
+                pels_trans = []
+
+            q_center = _quartets_to_tensor(pels_center, device)
+            if q_center.numel() > 0:
+                conn_center = (
+                    A[q_center[:, 0], q_center[:, 1]]
+                    & A[q_center[:, 0], q_center[:, 2]]
+                    & A[q_center[:, 0], q_center[:, 3]]
+                )
+                plane_center = _quartet_planarity_mask(pos, q_center, tol_rmsd)
+                pels_center = _apply_mask_to_quartets(pels_center, conn_center & plane_center)
+            else:
+                pels_center = []
 
     pels = [set(pel) for pel in pels_cis+pels_trans+pels_center]
 
