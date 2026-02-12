@@ -41,6 +41,25 @@ def _interp1d_torch(xq: torch.Tensor, xp: torch.Tensor, fp: torch.Tensor) -> tor
     return f0 + (f1-f0)*lam
 
 
+def _release_calc_device_cache(calc, *, empty_cache: bool = False):
+    if calc is None:
+        return
+
+    release = getattr(calc, "release_device_cache", None)
+    if callable(release):
+        try:
+            release(empty_cache=empty_cache)
+        except TypeError:
+            release()
+
+    mixer = getattr(calc, "mixer", None)
+    if mixer is not None:
+        sub_calcs = getattr(mixer, "calcs", None)
+        if sub_calcs is not None:
+            for sub in sub_calcs:
+                _release_calc_device_cache(sub, empty_cache=False)
+
+
 class HistoryBase():
     """
     Container storing the optimization history of the VariationalPathOpt.
@@ -965,16 +984,26 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
                 thread.start()
             for thread in threads:
                 thread.join()
+            for i in idxs:
+                _release_calc_device_cache(self.images[i].calc, empty_cache=False)
 
         elif self.parallel == 'mpi':
 
             self._get_forces_by_img_idxs_mpi(idxs,energies,forces)
+            for i in idxs:
+                _release_calc_device_cache(self.images[i].calc, empty_cache=False)
 
         else:
 
             for i in idxs:
-                forces[i] = self.images[i].get_forces()
-                energies[i] = self.images[i].get_potential_energy()
+                image = self.images[i]
+                forces[i] = image.get_forces()
+                energies[i] = image.get_potential_energy()
+                _release_calc_device_cache(image.calc, empty_cache=False)
+
+            # Give allocator a chance to defragment between large-image evaluations.
+            if self.device.type == "cuda" and self.natoms >= 2000 and torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
 
     def _get_forces_by_img_idxs_mpi(self,idxs,energies,forces):

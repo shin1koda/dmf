@@ -76,6 +76,9 @@ class FB_ENM(Calculator):
         self.torch_dtype = _resolve_torch_dtype(dtype)
         self.np_dtype = np.float64
         self._return_energy_mats = bool(return_energy_mats)
+        # CUDA memory is typically the bottleneck for large systems.
+        # Keep constants cached on device only on CPU backend.
+        self._cache_constants_on_device = (self.device.type != "cuda")
         self._d_min_t = None
         self._d_max_t = None
         self._delta_min_t = None
@@ -123,6 +126,8 @@ class FB_ENM(Calculator):
         )
 
     def _ensure_cached_constants(self):
+        if not self._cache_constants_on_device:
+            return
         specs = (
             ("_d_min_t", self.d_min),
             ("_d_max_t", self.d_max),
@@ -138,6 +143,25 @@ class FB_ENM(Calculator):
                     torch.as_tensor(arr, dtype=self.torch_dtype, device=self.device),
                 )
 
+    def _get_constants_t(self):
+        if self._cache_constants_on_device:
+            self._ensure_cached_constants()
+            return self._d_min_t, self._d_max_t, self._delta_min_t, self._delta_max_t
+        return (
+            torch.as_tensor(self.d_min, dtype=self.torch_dtype, device=self.device),
+            torch.as_tensor(self.d_max, dtype=self.torch_dtype, device=self.device),
+            torch.as_tensor(self.delta_min, dtype=self.torch_dtype, device=self.device),
+            torch.as_tensor(self.delta_max, dtype=self.torch_dtype, device=self.device),
+        )
+
+    def release_device_cache(self, empty_cache: bool = False):
+        self._d_min_t = None
+        self._d_max_t = None
+        self._delta_min_t = None
+        self._delta_max_t = None
+        if empty_cache and self.device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     @torch.no_grad()
     def calculate(self, atoms, properties, system_changes):
         super().calculate(atoms, properties, system_changes)
@@ -147,15 +171,14 @@ class FB_ENM(Calculator):
         pos_t = torch.as_tensor(pos, dtype=self.torch_dtype, device=self.device)
         d = torch.cdist(pos_t, pos_t)
 
-        # Cache torch copies of constants on the target device/dtype
-        self._ensure_cached_constants()
+        d_min_t, d_max_t, delta_min_t, delta_max_t = self._get_constants_t()
 
         # 2) Flat-bottom penalties (Torch on device)
-        d_rep = torch.clamp(d - self._d_min_t, max=0.0)
-        d_att = torch.clamp(d - self._d_max_t, min=0.0)
+        d_rep = torch.clamp(d - d_min_t, max=0.0)
+        d_att = torch.clamp(d - d_max_t, min=0.0)
 
-        inv_dmin2 = 1.0 / (self._delta_min_t * self._delta_min_t)
-        inv_dmax2 = 1.0 / (self._delta_max_t * self._delta_max_t)
+        inv_dmin2 = 1.0 / (delta_min_t * delta_min_t)
+        inv_dmax2 = 1.0 / (delta_max_t * delta_max_t)
 
         if self._return_energy_mats:
             e_rep = (d_rep * d_rep) * inv_dmin2
@@ -188,6 +211,9 @@ class FB_ENM(Calculator):
             # Keep energy matrices on device to avoid host transfer
             self.results['emat_rep'] = e_rep
             self.results['emat_att'] = e_att
+        elif self.device.type == "cuda":
+            # Drop large temporaries eagerly for large-N systems.
+            del d_min_t, d_max_t, delta_min_t, delta_max_t, d_rep, d_att, inv_dmin2, inv_dmax2, f1, s, forces, d, pos_t, energy
 
 
 
@@ -510,26 +536,34 @@ class CFB_ENM(Calculator):
         self.d_corr1[I] = 0.0
         self.d_corr2[I] = 0.0
 
-        self.d_corr0_t = torch.as_tensor(self.d_corr0,dtype=_tdt,device=_dev)
-        self.d_corr1_t = torch.as_tensor(self.d_corr1,dtype=_tdt,device=_dev)
-        self.d_corr2_t = torch.as_tensor(self.d_corr2,dtype=_tdt,device=_dev)
         if self.quartets:
-            self.quartets_t = torch.as_tensor(self.quartets,dtype=torch.long,device=_dev)
-        else:
-            self.quartets_t = torch.zeros((0,4),dtype=torch.long,device=_dev)
-        if self.quartets_t.numel() > 0:
-            self._q_i_t = self.quartets_t[:, 0]
-            self._q_j_t = self.quartets_t[:, 1]
-            self._q_k_t = self.quartets_t[:, 2]
-            self._q_l_t = self.quartets_t[:, 3]
-            self._d00_ij_t = self.d_corr0_t[self._q_i_t, self._q_j_t]
-            self._d00_kl_t = self.d_corr0_t[self._q_k_t, self._q_l_t]
-            self._d10_ij_t = self.d_corr1_t[self._q_i_t, self._q_j_t] - self._d00_ij_t
-            self._d10_kl_t = self.d_corr1_t[self._q_k_t, self._q_l_t] - self._d00_kl_t
-            self._d20_ij_t = self.d_corr2_t[self._q_i_t, self._q_j_t] - self._d00_ij_t
-            self._d20_kl_t = self.d_corr2_t[self._q_k_t, self._q_l_t] - self._d00_kl_t
+            q_np = np.asarray(self.quartets, dtype=np.int64)
+            q_i_np = q_np[:, 0]
+            q_j_np = q_np[:, 1]
+            q_k_np = q_np[:, 2]
+            q_l_np = q_np[:, 3]
+
+            d00_ij_np = self.d_corr0[q_i_np, q_j_np]
+            d00_kl_np = self.d_corr0[q_k_np, q_l_np]
+            d10_ij_np = self.d_corr1[q_i_np, q_j_np] - d00_ij_np
+            d10_kl_np = self.d_corr1[q_k_np, q_l_np] - d00_kl_np
+            d20_ij_np = self.d_corr2[q_i_np, q_j_np] - d00_ij_np
+            d20_kl_np = self.d_corr2[q_k_np, q_l_np] - d00_kl_np
+
+            self.quartets_t = torch.as_tensor(q_np,dtype=torch.long,device=_dev)
+            self._q_i_t = torch.as_tensor(q_i_np, dtype=torch.long, device=_dev)
+            self._q_j_t = torch.as_tensor(q_j_np, dtype=torch.long, device=_dev)
+            self._q_k_t = torch.as_tensor(q_k_np, dtype=torch.long, device=_dev)
+            self._q_l_t = torch.as_tensor(q_l_np, dtype=torch.long, device=_dev)
+            self._d00_ij_t = torch.as_tensor(d00_ij_np, dtype=_tdt, device=_dev)
+            self._d00_kl_t = torch.as_tensor(d00_kl_np, dtype=_tdt, device=_dev)
+            self._d10_ij_t = torch.as_tensor(d10_ij_np, dtype=_tdt, device=_dev)
+            self._d10_kl_t = torch.as_tensor(d10_kl_np, dtype=_tdt, device=_dev)
+            self._d20_ij_t = torch.as_tensor(d20_ij_np, dtype=_tdt, device=_dev)
+            self._d20_kl_t = torch.as_tensor(d20_kl_np, dtype=_tdt, device=_dev)
             self._dnm_t = self._d20_ij_t * self._d20_kl_t - self._d10_ij_t * self._d10_kl_t
         else:
+            self.quartets_t = torch.zeros((0,4),dtype=torch.long,device=_dev)
             self._q_i_t = torch.zeros((0,), dtype=torch.long, device=_dev)
             self._q_j_t = torch.zeros((0,), dtype=torch.long, device=_dev)
             self._q_k_t = torch.zeros((0,), dtype=torch.long, device=_dev)
@@ -541,6 +575,10 @@ class CFB_ENM(Calculator):
             self._d20_ij_t = torch.zeros((0,), dtype=_tdt, device=_dev)
             self._d20_kl_t = torch.zeros((0,), dtype=_tdt, device=_dev)
             self._dnm_t = torch.zeros((0,), dtype=_tdt, device=_dev)
+
+    def release_device_cache(self, empty_cache: bool = False):
+        if empty_cache and self.device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def copy(self, images=None):
         return type(self)(
