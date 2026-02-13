@@ -304,7 +304,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         self.device = _resolve_torch_device(device)
         self.torch_dtype = _resolve_torch_dtype(dtype)
 
-        #Prallel calculation
+        # Parallel calculation
         self.parallel = parallel
 
         if parallel and (parallel == "mpi" or world is not None):

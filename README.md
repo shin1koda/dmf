@@ -109,7 +109,7 @@ To use the PyTorch backend, import from `dmf.torch`. The rest of the API is unch
 from dmf.torch import DirectMaxFlux, interpolate_fbenm
 ```
 
-You can optionally specify the CUDA device in entry points such as `DirectMaxFlux` and `interpolate_fbenm`:
+When using `dmf.torch`, it automatically utilizes the available CUDA device. However, you can optionally specify the CUDA device in entry points such as `DirectMaxFlux` and `interpolate_fbenm`:
 
 ```python
 mxflx = DirectMaxFlux(ref_images, coefs=coefs, nmove=3, device="cuda")

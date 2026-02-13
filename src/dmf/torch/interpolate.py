@@ -37,6 +37,7 @@ def interpolate_fbenm(
         cfbenm_options=None,
         dmf_options=None,
         ipopt_options=None,
+        device=None,
         ):
     """
     Generate a plausible initial reaction path using FB-ENM or
@@ -79,6 +80,11 @@ def interpolate_fbenm(
         Keyword arguments forwarded to `DirectMaxFlux`.
     ipopt_options : dict, optional
         Keyword arguments forwarded to `DirectMaxFlux.add_ipopt_options()`.
+    device : str or torch.device, optional
+        Torch device for internal tensors (e.g. ``"cuda"``).
+        If not None, overrides any ``device`` specified in
+        ``dmf_options``, ``fbenm_options``, or ``cfbenm_options``.
+        If None, auto-select. Default: None.
 
     Returns
     -------
@@ -95,6 +101,9 @@ def interpolate_fbenm(
 
     fbenm_options, cfbenm_options, dmf_options, common_kwargs = \
         _extract_common_kwargs(fbenm_options, cfbenm_options, dmf_options)
+
+    if device is not None:
+        common_kwargs['device'] = device
 
     mxflx = DirectMaxFlux(ref_images,
                           nmove=nmove,
@@ -189,6 +198,7 @@ def interpolate_fbenm_new(
         cfbenm_options=None,
         dmf_options=None,
         ipopt_options=None,
+        device=None,
         ):
     """
     Generate a plausible initial reaction path using FB-ENM or
@@ -231,6 +241,11 @@ def interpolate_fbenm_new(
         Keyword arguments forwarded to `DirectMaxFlux`.
     ipopt_options : dict, optional
         Keyword arguments forwarded to `DirectMaxFlux.add_ipopt_options()`.
+    device : str or torch.device, optional
+        Torch device for internal tensors (e.g. ``"cuda"``).
+        If not None, overrides any ``device`` specified in
+        ``dmf_options``, ``fbenm_options``, or ``cfbenm_options``.
+        If None, auto-select. Default: None.
 
     Returns
     -------
@@ -247,6 +262,9 @@ def interpolate_fbenm_new(
 
     fbenm_options, cfbenm_options, dmf_options, common_kwargs = \
         _extract_common_kwargs(fbenm_options, cfbenm_options, dmf_options)
+
+    if device is not None:
+        common_kwargs['device'] = device
 
     if fbenm_only_endpoints:
         fbenm_images = [ref_images[0].copy(),ref_images[-1].copy()]
