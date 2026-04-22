@@ -1,1 +1,2 @@
-fbenm_ipopt.out
+__pycache__/
+*.out
