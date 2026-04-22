@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pydmf"
-version = "1.1.0"
+version = "1.1.1"
 description = "A Python package implementing the direct MaxFlux method and flat-bottom elastic network model for reaction path/transition state optimization."
 keywords = ["reaction path", "transition state", "DFT", "MaxFlux", "elastic network model", "chemistry", "optimization"]
 readme = { file = "README.md", content-type = "text/markdown" }
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
   { name = "Shin-ichi Koda", email = "koda@ims.ac.jp" }
@@ -26,6 +26,7 @@ classifiers = [
 
 [project.optional-dependencies]
 cyipopt = ["cyipopt>=1.4"]
+mpi = ["mpi4py"]
 dev = [
     "pytest",
     "build",
