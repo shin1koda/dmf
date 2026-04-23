@@ -109,6 +109,15 @@ Please cite:
  - Ref. 3 when you use the correlated flat-bottom elastic network model
 
 
+## Related works
+
+PyDMF has been used in the following applications.
+
+ - dmf-g16 (developed by our group): Wrapper software that enables DMF calculations with Gaussian and its native input formats. [Paper](https://doi.org/10.1002/jcc.70378) & [GitHub](https://github.com/shin1koda/dmf-g16).
+
+ - ColabReaction (developed by Karasawa et al.): Web-based application that integrates PyDMF and ML potential UMA. [Application](https://colabreaction.net/), [paper](https://doi.org/10.1021/acs.jcim.5c02398), & [GitHub](https://github.com/BILAB/ColabReaction).
+
+
 ## Community guidelines
 
 ### Contributing
