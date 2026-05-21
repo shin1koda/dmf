@@ -11,4 +11,4 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Updated `requires-python` to `>=3.10`.
-
+- Updated `README.md` to include applications using PyDMF
