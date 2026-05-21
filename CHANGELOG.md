@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.1.1] - 2026-04-21
+## [1.1.1] - 2026-05-21
 
 ### Added
 - Added `CHANGELOG.md` (this file).
