@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-05-22
+- Added `src/dmf/torch` for GPU acceleration, contributed by @t-0hmura .
+
 ## [1.1.1] - 2026-05-21
 
 ### Added
