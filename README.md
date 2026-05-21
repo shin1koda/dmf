@@ -13,6 +13,11 @@ The software is intended for researchers who use ASE-compatible calculators and 
  - Compared with existing initial-path generation approaches (e.g., IDPP), FB-ENM provides more energetically preferable paths with improved robustness.
 
 
+## Recent Updates
+
+- v1.2.0: GPU acceleration is now available, thanks to a contribution by @t-0hmura . See [README_TORCH.md](https://github.com/shin1koda/dmf/blob/main/README_TORCH.md) and [PR #3](https://github.com/shin1koda/dmf/pull/3) for details.
+
+
 ## Requirements
 
 - [ASE](https://ase-lib.org/)
@@ -89,32 +94,6 @@ Running the script produces several output files, including:
  - `sample_ini.traj`: FB-ENM–interpolated path written in ASE trajectory format
  - `sample_fin.traj`: Optimized reaction path using the EMT potential
  - `sample_tmax.traj`: History of the estimated highest-energy point during optimization
-
-
-## dmf.torch (GPU acceleration)
-
-`dmf.torch` is a PyTorch-accelerated backend that mirrors the `dmf` API while offloading internal tensor operations to PyTorch (CUDA when available).
-
-If you want to use `dmf.torch`, install a CUDA-matched build of PyTorch before installing PyDMF.  
-Example for CUDA 12.8:
-
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu128
-pip install "pydmf[torch]"
-```
-
-To use the PyTorch backend, import from `dmf.torch`. The rest of the API is unchanged:   
-
-```python
-from dmf.torch import DirectMaxFlux, interpolate_fbenm
-```
-
-When using `dmf.torch`, it automatically utilizes the available CUDA device. However, you can optionally specify the CUDA device in entry points such as `DirectMaxFlux` and `interpolate_fbenm`:
-
-```python
-mxflx = DirectMaxFlux(ref_images, coefs=coefs, nmove=3, device="cuda")
-mxflx_fbenm = interpolate_fbenm(ref_images, correlated=True, device="cuda")
-```
 
 
 ## Documentation
