@@ -66,7 +66,9 @@ Beyond these benchmarks, PyDMF has been adopted as a core component in higher-le
 
 # AI usage disclosure
 
-ChatGPT was used during the development of PyDMF and the preparation of this manuscript. For the source code, suggested code snippets were used specifically for implementing parts of the MPI parallelization, as well as for guidance on Python package directory structure and the preparation of pyproject.toml. All such code was reviewed and tested by the authors. ChatGPT was also used interactively to assist in drafting the manuscript, the GitHub repository README, and the API documentation. In all cases, the final content was written, verified, and approved by the authors.
+ChatGPT was used during the development of PyDMF and the preparation of this manuscript. For the source code, ChatGPT provided guidance on Python package directory structure and on the preparation of pyproject.toml; all suggested code was reviewed and tested by the authors. ChatGPT was also used interactively to assist in drafting the manuscript, the GitHub repository README, and the API documentation. In all cases, the final content was
+written, verified, and approved by the authors.
+
 
 # Acknowledgements
 

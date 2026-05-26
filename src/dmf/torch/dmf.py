@@ -1,6 +1,5 @@
 import threading
 from abc import ABC, abstractmethod
-from collections import defaultdict
 from typing import Optional
 
 import numpy as np
@@ -13,15 +12,6 @@ from functools import cached_property
 
 import torch
 from ._torch_config import _resolve_torch_device, _resolve_torch_dtype
-
-from ..mpi_backend import _worker_loop
-try:
-    import os
-    os.environ['UCX_LOG_LEVEL'] = 'error'
-    from mpi4py import MPI
-    HAS_MPI4PY = True
-except ImportError:
-    HAS_MPI4PY = False
 
 
 @torch.no_grad()
@@ -294,7 +284,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         remove_rotation_and_translation=True,
         mass_weighted=False,
         calc_factory=None,
-        parallel=False,world=None,
+        parallel=False,
         t_eval=None,w_eval=None,
         n_vel=None,n_trans=None,n_rot=None,
         eps_vel=0.01,eps_rot=0.01,
@@ -307,20 +297,6 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         # Parallel calculation
         self.parallel = parallel
 
-        if parallel and (parallel == "mpi" or world is not None):
-            self.parallel = "mpi"
-            if not HAS_MPI4PY:
-                raise RuntimeError("MPI parallel calculation requires mpi4py.")
-
-            self._world = MPI.COMM_WORLD if world is None else world
-            self._rank = self._world.Get_rank()
-            self._size = self._world.Get_size()
-        else:
-            self._world = None
-            self._rank = 0
-            self._size = 1
-
-
         #Initialize images
         if t_eval is None:
             self._nimages = 2*nsegs+1
@@ -331,35 +307,12 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         for _ in range(self._nimages):
             self.images.append(ref_images[0].copy())
 
-        r2i = defaultdict(list)
-        for i in range(self._nimages):
-            if i==0:
-                r = 0
-            elif i==self._nimages-1:
-                r = self._size-1
-            else:
-                r = (i-1)%self._size
-
-            r2i[r].append(i)
-
-        self._r2i = r2i
-
         #calc_factory
         self.calc_factory = calc_factory
 
-        if self.parallel == "mpi":
-            if self.calc_factory is None:
-                raise RuntimeError("parallel='mpi' requires calc_factory.")
-
         if self.calc_factory is not None:
-            for i in self._r2i[self._rank]:
-                self.images[i].calc = self.calc_factory(i)
-
-        if self.parallel == "mpi" and self._rank>0:
-            _worker_loop(self._world, self.images)
-            import sys
-            sys.exit(0)
-
+            for i, image in enumerate(self.images):
+                image.calc = self.calc_factory(i)
 
         #Atoms
         self.natoms = len(ref_images[0])
@@ -517,10 +470,6 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             "hessian_approximation": "limited-memory",
             "limited_memory_max_history": 5,
             }
-
-        if self.parallel == "mpi":
-            if self._rank > 0:
-                defaults['print_level'] = 0
 
         self.ipopt_options = dict()
         self.add_ipopt_options(defaults)
@@ -968,7 +917,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
 
     def _get_forces_by_img_idxs(self,idxs,energies,forces):
-        if self.parallel and self._world is None:
+        if self.parallel:
 
             def run(image, energies, forces):
                 forces[:] = image.get_forces()
@@ -987,12 +936,6 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             for i in idxs:
                 _release_calc_device_cache(self.images[i].calc, empty_cache=False)
 
-        elif self.parallel == 'mpi':
-
-            self._get_forces_by_img_idxs_mpi(idxs,energies,forces)
-            for i in idxs:
-                _release_calc_device_cache(self.images[i].calc, empty_cache=False)
-
         else:
 
             for i in idxs:
@@ -1005,53 +948,6 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
             if self.device.type == "cuda" and self.natoms >= 2000 and torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-
-    def _get_forces_by_img_idxs_mpi(self,idxs,energies,forces):
-
-        world = self._world
-        size  = self._size
-        workers = list(range(1, size))
-
-        temp_r2i = defaultdict(list)
-        s_idxs = set(idxs)
-        for r,idxs_r in self._r2i.items():
-            temp_idxs_r = sorted(s_idxs & set(idxs_r))
-            if temp_idxs_r:
-                temp_r2i[r] = temp_idxs_r
-
-        pos = self.get_positions()
-
-        results = {}
-
-        for r,idxs_r in temp_r2i.items():
-            if r>0:
-                send_dict = {i: pos[i] for i in idxs_r}
-                world.send(("DO", send_dict), dest=r)
-
-        my_results = {}
-        for i in temp_r2i[0]:
-            image = self.images[i]
-            F = image.get_forces()
-            E = image.get_potential_energy()
-            my_results[i] = {"E": E, "F": F}
-
-        results.update(my_results)
-
-
-        for r in temp_r2i:
-            if r>0:
-                cmd, payload = world.recv(source=r)
-                assert cmd == "RESULT"
-                results.update(payload)
-
-        for i,v in results.items():
-            energies[i] = v["E"]
-            forces[i] = v["F"]
-
-
-    def stop_mpi(self):
-        for r in range(1, self._size):
-            self._world.send(("STOP", None), dest=r)
 
     @abstractmethod
     def _get_objective(self) -> float:
@@ -1868,7 +1764,7 @@ class DirectMaxFlux(VariationalPathOpt):
         remove_rotation_and_translation: bool = True,
         mass_weighted: bool = False,
         calc_factory=None,
-        parallel: bool = False, world=None,
+        parallel: bool = False,
         t_eval: Optional[np.ndarray] = None,
         w_eval: Optional[np.ndarray] = None,
         n_vel: Optional[int] = None,
@@ -1888,7 +1784,7 @@ class DirectMaxFlux(VariationalPathOpt):
         base_params = [
             'ref_images','coefs','nsegs','dspl',
             'remove_rotation_and_translation','mass_weighted',
-            'calc_factory','parallel','world','t_eval','w_eval','n_vel',
+            'calc_factory','parallel','t_eval','w_eval','n_vel',
             'n_trans','n_rot','eps_vel','eps_rot','device','dtype']
         base_args = {k:args[k] for k in base_params}
 

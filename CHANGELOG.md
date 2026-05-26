@@ -2,7 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1] - 2026-05-
+
+### Removed
+- `parallel='mpi'` option from `DirectMaxFlux`, as the existing thread-based parallelization provides equivalent image-level parallelism.
+
 ## [1.2.0] - 2026-05-22
+
+### Added
 - Added `src/dmf/torch` for GPU acceleration, contributed by @t-0hmura .
 
 ## [1.1.1] - 2026-05-21

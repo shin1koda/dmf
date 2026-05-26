@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pydmf"
-version = "1.2.0"
+version = "1.2.1"
 description = "A Python package implementing the direct MaxFlux method and flat-bottom elastic network model for reaction path/transition state optimization."
 keywords = ["reaction path", "transition state", "DFT", "MaxFlux", "elastic network model", "chemistry", "optimization"]
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -26,7 +26,6 @@ classifiers = [
 
 [project.optional-dependencies]
 cyipopt = ["cyipopt>=1.4"]
-mpi = ["mpi4py"]
 dev = [
     "pytest",
     "build",
