@@ -79,7 +79,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
     Additional features include:
     - construction of initial B-spline coefficients from ``ref_images``
     - optional removal of translational and rotational redundancy
-    - parallel energy/force evaluation (threads or MPI)
+    - parallel energy/force evaluation using Python threads
 
 
     Parameters
@@ -115,12 +115,14 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         If True, the velocity norm \( \vert \dot{x}(t) \vert \) uses mass-weighted
         coordinates. Default: False.
 
-    parallel : bool, optional
-        Evaluate energies and forces in parallel using threads or MPI.
-        Default: False.
+    calc_factory : callable, optional
+        Factory function returning a calculator for image index ``i``.
+        If provided, ``calc_factory(i)`` is assigned to ``images[i].calc``.
+        Default: None.
 
-    world : MPI communicator, optional
-        Communicator used when ``parallel=True``. Default: None.
+    parallel : bool, optional
+        Evaluate energies and forces in parallel using Python threads.
+        Default: False.
 
     t_eval : ndarray, optional
         Energy evaluation points in \( t \in [0,1] \).  
@@ -1401,7 +1403,7 @@ class DirectMaxFlux(VariationalPathOpt):
     Additional features include:
     - construction of initial B-spline coefficients from ``ref_images``
     - optional removal of translational and rotational redundancy
-    - parallel energy/force evaluation (threads or MPI)
+    - parallel energy/force evaluation using Python threads
     - optional adaptive refinement of ``t_eval`` near the high-energy region
 
 
@@ -1438,12 +1440,14 @@ class DirectMaxFlux(VariationalPathOpt):
         If True, the velocity norm \( \vert \dot{x}(t) \vert \) uses mass-weighted
         coordinates. Default: False.
 
-    parallel : bool, optional
-        Evaluate energies and forces in parallel using threads or MPI.
-        Default: False.
+    calc_factory : callable, optional
+        Factory function returning a calculator for image index ``i``.
+        If provided, ``calc_factory(i)`` is assigned to ``images[i].calc``.
+        Default: None.
 
-    world : MPI communicator, optional
-        Communicator used when ``parallel=True``. Default: None.
+    parallel : bool, optional
+        Evaluate energies and forces in parallel using Python threads.
+        Default: False.
 
     t_eval : ndarray of shape ``(nmove+2,)``, optional
         **Initial** evaluation points in \( t \in [0,1] \).  
