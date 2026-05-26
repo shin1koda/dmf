@@ -115,6 +115,16 @@ class FB_ENM(Calculator):
         self.delta_max = delta_max_np
 
     def copy(self):
+        """
+        Return a copy of this FB-ENM calculator.
+
+        Returns
+        -------
+        FB_ENM
+            A new calculator with the same flat-bottom bounds and wall-width
+            parameters.
+
+        """
         return FB_ENM(
             self.d_min,
             self.d_max,
@@ -581,6 +591,22 @@ class CFB_ENM(Calculator):
             torch.cuda.empty_cache()
 
     def copy(self, images=None):
+        """
+        Return a copy of this CFB-ENM calculator.
+
+        Parameters
+        ----------
+        images : list of ase.Atoms
+            The same reference images that were used to construct the original
+            ``CFB_ENM`` instance.
+
+        Returns
+        -------
+        CFB_ENM
+            A new ``CFB_ENM`` instance with the same correlation parameters and
+            quartet list.
+
+        """
         return type(self)(
             images=images,
             d_bond=self.d_bond,

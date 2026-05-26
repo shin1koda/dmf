@@ -72,6 +72,16 @@ class FB_ENM(Calculator):
         self.delta_max[I] = 1.0
 
     def copy(self):
+        """
+        Return a copy of this FB-ENM calculator.
+
+        Returns
+        -------
+        FB_ENM
+            A new calculator with the same flat-bottom bounds and wall-width
+            parameters.
+
+        """
         return FB_ENM(self.d_min,
                       self.d_max,
                       delta_min=self.delta_min,
@@ -373,6 +383,22 @@ class CFB_ENM(Calculator):
         self.d_corr2[I] = 0.0
 
     def copy(self,images):
+        """
+        Return a copy of this CFB-ENM calculator.
+
+        Parameters
+        ----------
+        images : list of ase.Atoms
+            The same reference images that were used to construct the original
+            ``CFB_ENM`` instance.
+
+        Returns
+        -------
+        CFB_ENM
+            A new ``CFB_ENM`` instance with the same correlation parameters and
+            quartet list.
+
+        """
         return type(self)(images,
                           d_bond=self.d_bond,
                           d_corr0=self.d_corr0,

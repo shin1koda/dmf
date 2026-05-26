@@ -21,7 +21,7 @@ The public API of the package is intentionally kept small and consists of:
     computing energies and forces along structural pathways.
 
 * **interpolate_fbenm**
-    A utility function for interpolating energies/forces from the FB-ENM
+    A utility function for interpolating given structures from the FB-ENM
     calculators.
 
 Internal implementation classes, including the abstract base class
