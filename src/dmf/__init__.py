@@ -1,7 +1,4 @@
 """
-PyDMF v1.2.1 : Direct MaxFlux and FB-ENM utilities
-==================================================
-
 This package provides an implementation of the Direct MaxFlux (DMF) method
 for variational reaction-path optimization, together with the FB-ENM family
 of elastic network model (ENM) calculators and several supporting utility

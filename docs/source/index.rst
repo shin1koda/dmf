@@ -1,5 +1,17 @@
 .. dmf documentation master file
 
+
+PyDMF v1.2.1 : Direct MaxFlux and FB-ENM utilities
+==================================================
+
+
+.. note::
+
+   This page is intended as the API documentation for PyDMF.
+   For installation instructions and basic usage examples, please refer to the
+   `GitHub repository <https://github.com/shin1koda/dmf>`_.
+
+
 .. automodule:: dmf
    :no-members:
    :no-imported-members:
