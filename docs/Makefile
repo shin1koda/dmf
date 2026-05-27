@@ -25,6 +25,6 @@ publish:
 	@echo "Building HTML..."
 	$(SPHINXBUILD) -M html "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS)
 	@echo "Deploying to GitHub Pages..."
-	ghp-import -n -p -r github $(BUILDDIR)/html
+	ghp-import -n -p -f -r github $(BUILDDIR)/html
 	@echo "Done. GitHub Pages updated."
 
