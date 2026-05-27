@@ -45,6 +45,8 @@ pip install pydmf
 
 ## Example usage
 
+### Basic usage
+
 PyDMF is used as part of an ASE script. For the basics of ASE, please refer to its [official documentation](https://ase-lib.org/gettingstarted/gettingstarted.html).
 An example script is provided in `sample/sample.py` of [PyDMF GitHub repository](https://github.com/shin1koda/dmf):
 
@@ -95,6 +97,9 @@ Running the script produces several output files, including:
  - `sample_fin.traj`: Optimized reaction path using the EMT potential
  - `sample_tmax.traj`: History of the estimated highest-energy point during optimization
 
+### Parallel energy/force evaluation
+
+PyDMF supports parallel energy and force evaluations at the energy evaluation points along the path. See [README_PARALLEL.md](https://github.com/shin1koda/dmf/blob/main/README_PARALLEL.md) for details.
 
 ## Documentation
 
