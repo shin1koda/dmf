@@ -16,7 +16,7 @@ except ImportError:
     )
 from .dmf import DirectMaxFlux,HistoryDMF
 from .fbenm import FB_ENM, CFB_ENM, FB_ENM_Bonds
-from .interpolate import interpolate_fbenm, interpolate_fbenm_new
+from .interpolate import interpolate_fbenm
 
 __all__ = [
     "DirectMaxFlux",

@@ -31,7 +31,8 @@ jobs:
 
       - name: Install PyDMF
         run: |
-          pip install -e .
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e .[torch]
 
       - name: Run tests
         run: |
