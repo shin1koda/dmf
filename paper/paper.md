@@ -28,7 +28,7 @@ bibliography: paper.bib
 
 # Summary
 
-Identifying accurate reaction paths and transition states is essential for understanding structural changes in molecular systems. PyDMF is a Python package that implements two recent methods for reaction-path optimization: the direct MaxFlux method [@koda2024locating], which improves computational efficiency through a variational formalism, and the flat-bottom elastic network model [@koda2024flatbott; @koda2025correlat], which improves the applicability of reaction-path optimization by generating chemically plausible initial paths. Through integration with the Atomic Simulation Environment, PyDMF can use a wide range of atomistic simulation software to evaluate energies along a path. Benchmark studies demonstrate that PyDMF achieves higher overall performance than existing reaction-path optimization methods.
+Identifying accurate reaction paths and transition states is essential for understanding structural changes in molecular systems. PyDMF is a Python package that implements two recent methods for reaction-path optimization: the direct MaxFlux method [@koda2024locating], which improves computational efficiency through a variational formalism, and the flat-bottom elastic network model [@koda2024flatbott; @koda2025correlat], which improves the applicability of reaction-path optimization by generating chemically plausible initial paths. Through integration with the Atomic Simulation Environment, PyDMF can use a wide range of atomistic simulation software to evaluate energies along a path.
 
 
 # Statement of need
@@ -59,7 +59,7 @@ In PyDMF, the implementation focuses on defining the nonlinear optimization prob
 
 # Research impact statement
 
-PyDMF provides reusable research software for double-ended transition-state searches and transition-path analysis. It implements DMF and FB-ENM through ASE, making these methods available as documented, tested, and extensible Python components. The underlying methods and their benchmark performance have been described in previous methodological studies [@koda2024locating; @koda2024flatbott; @koda2025correlat].
+PyDMF provides reusable research software for double-ended transition-state searches and transition-path analysis. It implements DMF and FB-ENM through ASE, making these methods available as documented, tested, and extensible Python components. The underlying methods and their benchmark performance have been described in previous methodological studies [@koda2024locating; @koda2024flatbott; @koda2025correlat; @koda2026dmfg16].
 
 The impact of PyDMF is reflected in its adoption by higher-level computational workflows. It serves as the transition-state search engine in ColabReaction, a web-based application for transition-state searches [@karasawa2025colabrea], and has also been incorporated into an end-to-end workflow for automated transition-path analysis of protein reactions [@ohmura2026pdb2]. The GPU support recently added to PyDMF was motivated by this application and has since been incorporated into the main PyDMF codebase through an external contribution. PyDMF is also used as the underlying path-optimization engine in dmf-g16, a Gaussian wrapper that enables double-ended transition-state searches from native Gaussian input files [@koda2026dmfg16].
 
