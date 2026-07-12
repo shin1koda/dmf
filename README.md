@@ -87,7 +87,7 @@ You can run it simply by:
 
 ```bash
 git clone https://github.com/shin1koda/dmf
-cd dmf/sample
+cd dmf/samples
 python sample.py
 ```
 
