@@ -28,7 +28,7 @@ def test_maxflux_torch():
     from dmf.torch import DirectMaxFlux, interpolate_fbenm
 
     # read react.xyz and prod.xyz
-    ref_images = [read('sample/react.xyz'), read('sample/prod.xyz')]
+    ref_images = [read('samples/react.xyz'), read('samples/prod.xyz')]
 
     # generate initial path by FB-ENM
     mxflx_fbenm = interpolate_fbenm(ref_images,correlated=True,device="cpu")
