@@ -533,7 +533,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         return np.tensordot(P_temp[nu].T,self.coefs,1)
 
     def set_coefs_angs(self,coefs=None,angs=None):
-        """
+        r"""
         Update the B-spline coefficients and/or rotation angles.
 
         This method updates ``coefs`` and ``angs`` if the
