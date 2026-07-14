@@ -2,7 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.2.1] - 2026-05-
+## [1.2.2] - 2026-07-15
+
+### Added
+- Added `samples/sample_parallel.py` .
+
+### Changed
+- Some minor changes for JOSS revision.
+
+
+## [1.2.1] - 2026-05-28
 
 ### Removed
 - `parallel='mpi'` option from `DirectMaxFlux`, as the existing thread-based parallelization provides equivalent image-level parallelism.

@@ -19,7 +19,7 @@ authors:
 affiliations:
   - name: Institute for Molecular Science, National Institutes of Natural Sciences, Okazaki, 444-8585, Japan
     index: 1
-  - name: Graduate University for Advanced Studies, SOKENDAI, Okazaki, 444-8585, Japan
+  - name: The Graduate University for Advanced Studies, SOKENDAI, Okazaki, 444-8585, Japan
     index: 2
 
 date: 3 December 2025
