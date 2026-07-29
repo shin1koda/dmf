@@ -47,7 +47,7 @@ As noted above, existing double-ended optimization methods such as NEB are imple
 
 From a theoretical standpoint, DMF implemented in PyDMF differs fundamentally from the existing approaches. DMF is based on a variational formulation in which reaction-path optimization is expressed as a well-defined minimization problem with an explicit objective function. In contrast to NEB or string methods, which rely on non-variational schemes, DMF can directly leverage general-purpose nonlinear optimization algorithms. In practice, PyDMF employs the state-of-the-art optimizer IPOPT [@wachter2006ontheimp] via its Python interface cyipopt, enabling efficient and robust optimization without introducing method-specific path-update algorithms.
 
-This design choice necessarily introduces a dependency on external optimization libraries. For this reason, PyDMF was developed as a standalone software package rather than as a contribution to an existing framework. Requiring DMF-specific optimizer dependencies, which also require the use of conda, for all users of an integrated framework such as ASE would impose unnecessary constraints on users who do not require DMF functionality. Implementing PyDMF as an independent package therefore provides a practical separation of concerns, allowing advanced variational reaction-path optimization capabilities to be offered exclusively to users who need them.
+This design choice necessarily introduces a dependency on external optimization libraries. For this reason, PyDMF was developed as a standalone software package rather than as a contribution to an existing framework. Requiring all users of an integrated framework such as ASE to install DMF-specific optimizer dependencies, which in turn depend on conda, would impose unnecessary constraints on those who do not need DMF functionality. Implementing PyDMF as an independent package therefore provides a practical separation of concerns, allowing advanced variational reaction-path optimization capabilities to be offered exclusively to users who need them.
 
 # Software design
 
@@ -61,9 +61,9 @@ In PyDMF, the implementation focuses on defining the nonlinear optimization prob
 
 PyDMF provides reusable research software for double-ended transition-state searches and transition-path analysis. It implements DMF and FB-ENM through ASE, making these methods available as documented, tested, and extensible Python components. The underlying methods and their benchmark performance have been described in previous methodological studies [@koda2024locating; @koda2024flatbott; @koda2025correlat; @koda2026dmfg16].
 
-The impact of PyDMF is reflected in its adoption by higher-level computational workflows. It serves as the transition-state search engine in ColabReaction, a web-based application for transition-state searches [@karasawa2025colabrea], and has also been incorporated into an end-to-end workflow for automated transition-path analysis of protein reactions [@ohmura2026pdb2]. The GPU support recently added to PyDMF was motivated by this application and has since been incorporated into the main PyDMF codebase through an external contribution. PyDMF is also used as the underlying path-optimization engine in dmf-g16, a Gaussian wrapper that enables double-ended transition-state searches from native Gaussian input files [@koda2026dmfg16].
+The impact of PyDMF is reflected in its adoption by higher-level computational workflows. It serves as the transition-state search engine in ColabReaction, a web-based application for such searches [@karasawa2025colabrea], and has also been incorporated into an end-to-end workflow for automated transition-path analysis of protein reactions [@ohmura2026pdb2]. The GPU support recently added to PyDMF was motivated by this application and has since been incorporated into the main PyDMF codebase through an external contribution. PyDMF is also used as the underlying path-optimization engine in dmf-g16, a Gaussian wrapper that enables double-ended transition-state searches from native Gaussian input files [@koda2026dmfg16].
 
-Together with recent applications of PyDMF and PyDMF-based workflows in computational chemistry studies [@nakano2025high; @kondo2026osim; @dhiman2026porcine], these integrations and contributions show that PyDMF has developed beyond a methodological reference implementation into reusable research infrastructure for transition-state and transition-path searches.
+Together with recent applications of PyDMF and PyDMF-based workflows in computational chemistry studies [@nakano2025high; @kondo2026osim; @dhiman2026porcine], these integrations and contributions show that PyDMF has evolved from a methodological reference implementation into reusable research infrastructure for transition-state and transition-path searches.
 
 # AI usage disclosure
 
@@ -73,7 +73,7 @@ written, verified, and approved by the authors.
 
 # Acknowledgements
 
-This work has been supported by JSPS KAKENHI, Grant Number JP22K14652 (S-i.K.), JP21H04676, and JP23K17361 (S.S.).
-The software development and benchmarking were performed using Research Center for Computational Science, Okazaki, Japan (Project: 23-IMS-C196, 24-IMS-C193, and 25-IMS-C223).
+This work has been supported by JSPS KAKENHI, Grant Numbers JP22K14652 (S-i.K.), JP21H04676, and JP23K17361 (S.S.).
+The software development and benchmarking were performed at the Research Center for Computational Science, Okazaki, Japan (Project: 23-IMS-C196, 24-IMS-C193, and 25-IMS-C223).
 
 # References
