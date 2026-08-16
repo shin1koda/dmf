@@ -1,4 +1,5 @@
 import threading
+import warnings
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -31,23 +32,63 @@ def _interp1d_torch(xq: torch.Tensor, xp: torch.Tensor, fp: torch.Tensor) -> tor
     return f0 + (f1-f0)*lam
 
 
-def _release_calc_device_cache(calc, *, empty_cache: bool = False):
-    if calc is None:
+def _release_calc_device_cache(calc, seen, errors):
+    """Release each calculator in a mixer graph once."""
+    if calc is None or id(calc) in seen:
         return
+    seen.add(id(calc))
 
     release = getattr(calc, "release_device_cache", None)
     if callable(release):
         try:
-            release(empty_cache=empty_cache)
-        except TypeError:
+            # A single no-arg call lets an implementation TypeError propagate
+            # without being mistaken for signature incompatibility.
             release()
+        except BaseException as exc:
+            errors.append(exc)
 
     mixer = getattr(calc, "mixer", None)
-    if mixer is not None:
-        sub_calcs = getattr(mixer, "calcs", None)
-        if sub_calcs is not None:
-            for sub in sub_calcs:
-                _release_calc_device_cache(sub, empty_cache=False)
+    sub_calcs = getattr(mixer, "calcs", ()) if mixer is not None else ()
+    for sub in sub_calcs:
+        _release_calc_device_cache(sub, seen, errors)
+
+
+def _calc_graph_nodes(calc):
+    """Return calculators reachable through ASE mixer children once each."""
+    ids = set()
+    nodes = []
+    stack = [calc]
+    while stack:
+        current = stack.pop()
+        if current is None or id(current) in ids:
+            continue
+        ids.add(id(current))
+        nodes.append(current)
+        mixer = getattr(current, "mixer", None)
+        stack.extend(getattr(mixer, "calcs", ()) if mixer is not None else ())
+    return nodes
+
+
+def _calc_graph_ids(calc):
+    """Return calculator identities reachable through ASE mixer children."""
+    return {id(node) for node in _calc_graph_nodes(calc)}
+
+
+def _calc_graph_device_cache_entries(calc):
+    """Return unique cache-group owner/device entries for one graph."""
+    entries = {}
+    for node in _calc_graph_nodes(calc):
+        get_key = getattr(node, "_dmf_device_cache_key", None)
+        if not callable(get_key):
+            continue
+        key = get_key()
+        if key is not None:
+            device = torch.device(getattr(node, "device"))
+            bare_cuda = device.type == "cuda" and device.index is None
+            if bare_cuda:
+                device = torch.device("cuda", torch.cuda.current_device())
+            entries.setdefault(id(key), (node, device, bare_cuda))
+    return list(entries.items())
 
 
 class HistoryBase():
@@ -184,6 +225,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
     n_vel : int, optional
         Number of discretized velocity constraints.
+        Must be at least 1 when specified.
         Default: ``4 * nsegs``.
 
     n_trans : int, optional
@@ -205,6 +247,13 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
     dtype : str or torch.dtype, optional
         Torch floating-point dtype for internal calculations
         (``float32`` or ``float64``). Default: ``float64``.
+
+    keep_history : bool, optional
+        If True, ``intermediate`` records the per-iteration quantities listed in
+        :class:`HistoryBase`. Set to False to skip that record, and the energy
+        interpolation it needs, when the history is not going to be read; the
+        retained forces and structures grow with the iteration count.
+        Default: True.
 
 
     Attributes
@@ -295,12 +344,16 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         eps_vel=0.01,eps_rot=0.01,
         device=None,
         dtype=None,
+        keep_history=True,
         ):
         self.device = _resolve_torch_device(device)
         self.torch_dtype = _resolve_torch_dtype(dtype)
+        if n_vel is not None and int(n_vel) < 1:
+            raise ValueError("n_vel must be at least 1.")
 
         # Parallel calculation
         self.parallel = parallel
+        self._serial_cache_warned = False
 
         #Initialize images
         if t_eval is None:
@@ -314,7 +367,6 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
         #calc_factory
         self.calc_factory = calc_factory
-
         if self.calc_factory is not None:
             for i, image in enumerate(self.images):
                 image.calc = self.calc_factory(i)
@@ -427,6 +479,7 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
         self.forces = None
         self.energies = None
 
+        self.keep_history = bool(keep_history)
         self.history = HistoryBase()
 
         #initialize cyipopt.Problem
@@ -922,36 +975,120 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
 
     def _get_forces_by_img_idxs(self,idxs,energies,forces):
-        if self.parallel:
+        # Only calculators that expose a dense CUDA cache group require serial
+        # image evaluation.  The optimizer's own device does not describe an
+        # arbitrary ASE calculator returned by calc_factory.
+        cache_entries = {}
+        cache_group_users = {}
+        for i, image in enumerate(self.images):
+            entries = _calc_graph_device_cache_entries(image.calc)
+            cache_entries[i] = entries
+            for group_id, _ in entries:
+                cache_group_users[group_id] = cache_group_users.get(group_id, 0) + 1
 
-            def run(image, energies, forces):
-                forces[:] = image.get_forces()
-                energies[:] = image.get_potential_energy()
+        def release_unique_cache_groups(i):
+            for group_id, (owner, _, _) in cache_entries[i]:
+                if cache_group_users[group_id] != 1:
+                    continue
+                release = getattr(owner, "release_device_cache", None)
+                if callable(release):
+                    release()
+
+        has_bare_cuda_cache = False
+        cache_device_images = {}
+        for i in idxs:
+            for _, (_, device, bare_cuda) in cache_entries[i]:
+                has_bare_cuda_cache = has_bare_cuda_cache or bare_cuda
+                cache_device_images.setdefault(device, set()).add(i)
+        cache_device_conflict = has_bare_cuda_cache or any(
+            len(image_ids) > 1 for image_ids in cache_device_images.values()
+        )
+        shared_calc = False
+        seen_calc_ids = set()
+        for i in idxs:
+            graph_ids = _calc_graph_ids(self.images[i].calc)
+            if seen_calc_ids.intersection(graph_ids):
+                shared_calc = True
+                break
+            seen_calc_ids.update(graph_ids)
+
+        if self.parallel and (cache_device_conflict or shared_calc):
+            if not self._serial_cache_warned:
+                self._serial_cache_warned = True
+                warnings.warn(
+                    "parallel=True: images that share a device cache group or a "
+                    "calculator are evaluated one at a time to bound peak memory.",
+                    RuntimeWarning, stacklevel=2)
+
+        if self.parallel and not cache_device_conflict and not shared_calc:
+
+            errors = [None] * len(idxs)
+
+            def run(slot, i, image, energies, forces):
+                error = None
+                try:
+                    forces[:] = image.get_forces()
+                    energies[:] = image.get_potential_energy()
+                except BaseException as exc:
+                    error = exc
+                try:
+                    release_unique_cache_groups(i)
+                except BaseException as exc:
+                    if error is None:
+                        error = exc
+                errors[slot] = error
 
             threads = [threading.Thread(target=run,
-                                        args=(self.images[i],
+                                        args=(slot, i, self.images[i],
                                               energies[i:i+1],
                                               forces[i:i+1]))
-                       for i in idxs]
+                       for slot, i in enumerate(idxs)]
 
             for thread in threads:
                 thread.start()
             for thread in threads:
                 thread.join()
-            for i in idxs:
-                _release_calc_device_cache(self.images[i].calc, empty_cache=False)
+            for exc in errors:
+                if exc is not None:
+                    raise exc
 
         else:
 
             for i in idxs:
                 image = self.images[i]
-                forces[i] = image.get_forces()
-                energies[i] = image.get_potential_energy()
-                _release_calc_device_cache(image.calc, empty_cache=False)
+                try:
+                    forces[i] = image.get_forces()
+                    energies[i] = image.get_potential_energy()
+                except BaseException as primary:
+                    try:
+                        release_unique_cache_groups(i)
+                    except BaseException as release_error:
+                        raise primary from release_error
+                    raise
+                release_unique_cache_groups(i)
 
-            # Give allocator a chance to defragment between large-image evaluations.
-            if self.device.type == "cuda" and self.natoms >= 2000 and torch.cuda.is_available():
-                torch.cuda.empty_cache()
+    def release_device_cache(self, empty_cache: bool = False):
+        """Release calculator device caches after this path stage is finished.
+
+        A shared FB-ENM constant set remains resident between force sweeps and
+        is uploaded only once.  Cache groups owned by only one path image are
+        released immediately after that image is evaluated so independent
+        calculators cannot accumulate across the sweep.  Call this method at
+        the phase boundary to release the remaining shared groups.
+        ``empty_cache=True`` also returns unused allocator blocks to the CUDA
+        driver after live tensors have been released.  ``solve`` calls this
+        method on exit, so it is only needed when force sweeps are driven
+        directly.
+        """
+        seen = set()
+        errors = []
+        for image in self.images:
+            _release_calc_device_cache(image.calc, seen, errors)
+        if (empty_cache and self.device.type == "cuda"
+                and torch.cuda.is_available()):
+            torch.cuda.empty_cache()
+        if errors:
+            raise errors[0]
 
 
     @abstractmethod
@@ -1096,6 +1233,49 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
                 t_fd_vel,grad_fd_vels).cpu().numpy()
 
     @torch.no_grad()
+    def _grad_norm_vels_weighted(self, w) -> np.ndarray:
+        r"""Return :math:`\sum_k w_k\, \partial \vert \dot{x}(t_k)\vert/\partial c`.
+
+        Equivalent to ``np.tensordot(w, self._get_norm_vels(nu=1), 1)``, but the
+        weights are folded through the linear interpolation first so the
+        ``(len(t_eval), nbasis, natoms, 3)`` intermediate is never built and
+        copied to the host: both callers contract it over the image axis
+        immediately, leaving only ``(nbasis, natoms, 3)``.
+        """
+        w_t = torch.as_tensor(
+            np.asarray(w, dtype=np.float64), dtype=self.torch_dtype, device=self.device)
+
+        # Weight of each row of the finite-difference velocity grid, obtained by
+        # pushing w back through _interp1d_torch's two-point stencil.
+        xp = self._t_fd_vel_t
+        idx = torch.searchsorted(xp, self._t_eval_t, right=False).clamp(1, xp.numel() - 1)
+        x0, x1 = xp[idx - 1], xp[idx]
+        lam = (self._t_eval_t - x0) / (x1 - x0)
+        w_fd = torch.zeros(xp.numel(), dtype=self.torch_dtype, device=self.device)
+        w_fd.index_add_(0, idx - 1, w_t * (1.0 - lam))
+        w_fd.index_add_(0, idx, w_t * lam)
+
+        # grad_fd_vels[1:-1] holds the per-segment gradients, with the first and
+        # last rows duplicating the end segments.
+        w_seg = w_fd[1:-1].clone()
+        w_seg[0] = w_seg[0] + w_fd[0]
+        w_seg[-1] = w_seg[-1] + w_fd[-1]
+
+        pos_t = self._get_positions_torch(self._P_vel_t)
+        diffs = pos_t[1:] - pos_t[:-1]
+        norm_dx = torch.sqrt(
+            torch.sum(self._masses_t[None, :, None] * diffs**2, dim=(1, 2)))
+        norm_dx = torch.clamp(norm_dx, min=1.0e-12)
+
+        diff_P_vel0 = self._P_vel_t[0, :, 1:] - self._P_vel_t[0, :, :-1]
+        return torch.einsum(
+            'i,bi,a,ias->bas',
+            w_seg / (self._dt_vel_t * norm_dx),
+            diff_P_vel0,
+            self._masses_t,
+            diffs).cpu().numpy()
+
+    @torch.no_grad()
     def _get_action(self) -> float:
 
         self._ensure_current_state()
@@ -1113,9 +1293,8 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
         fe,dfe = self._get_func_en(self.energies)
         norm_vels = self._get_norm_vels()
-        grad_norm_vels = self._get_norm_vels(nu=1)
 
-        grad_action = np.tensordot(self.w_eval*fe,grad_norm_vels,1) \
+        grad_action = self._grad_norm_vels_weighted(self.w_eval*fe) \
             - np.tensordot(
                 self._P_eval[0]*self.w_eval*norm_vels*dfe,
                 self.forces,1)
@@ -1309,7 +1488,12 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
                     self.add_ipopt_options({'dual_inf_tol':0.2})
 
         x0 = self.get_x()
-        x,info = super().solve(x0)
+        try:
+            x,info = super().solve(x0)
+        finally:
+            # The shared constant set stays resident between force sweeps, so
+            # release it once the path stage is over.
+            self.release_device_cache()
         self.set_x(x)
         return x,info
 
@@ -1475,10 +1659,18 @@ class VariationalPathOpt(ABC, cyipopt.Problem):
 
         """
 
+        if not self.keep_history:
+            # Nothing recorded here feeds the optimization, so with the history
+            # off skip the per-iteration force array, the Atoms copy, and the
+            # energy interpolation they require.
+            return
+
         self.history.forces.append(self.forces)
         self.history.energies.append(self.energies)
-        self.history.coefs.append(self.coefs)
-        self.history.angs.append(self.angs)
+        # coefs is updated in place by set_x, so store a snapshot; appending the
+        # live array made every recorded entry the final geometry.
+        self.history.coefs.append(self.coefs.copy())
+        self.history.angs.append(self.angs.copy())
         self.history.duals.append(inf_du)
 
         polys,tmax,emax_interp = self.interpolate_energies()
@@ -1638,6 +1830,7 @@ class DirectMaxFlux(VariationalPathOpt):
 
     n_vel : int, optional
         Number of discretized velocity constraints.
+        Must be at least 1 when specified.
         Default: ``4 * nsegs``.
 
     n_trans : int, optional
@@ -1677,6 +1870,13 @@ class DirectMaxFlux(VariationalPathOpt):
     dtype : str or torch.dtype, optional
         Torch floating-point dtype for internal calculations
         (``float32`` or ``float64``). Default: ``float64``.
+
+    keep_history : bool, optional
+        If True, ``intermediate`` records the per-iteration quantities listed in
+        :class:`HistoryDMF`. Set to False to skip that record, and the energy
+        interpolation it needs, when the history is not going to be read; the
+        retained forces and structures grow with the iteration count.
+        Default: True.
 
 
     Attributes
@@ -1788,6 +1988,7 @@ class DirectMaxFlux(VariationalPathOpt):
         params_t_update: Optional[dict] = None,
         device=None,
         dtype=None,
+        keep_history: bool = True,
         ):
 
         args = locals()
@@ -1795,7 +1996,8 @@ class DirectMaxFlux(VariationalPathOpt):
             'ref_images','coefs','nsegs','dspl',
             'remove_rotation_and_translation','mass_weighted',
             'calc_factory','parallel','t_eval','w_eval','n_vel',
-            'n_trans','n_rot','eps_vel','eps_rot','device','dtype']
+            'n_trans','n_rot','eps_vel','eps_rot','device','dtype',
+            'keep_history']
         base_args = {k:args[k] for k in base_params}
 
         if params_t_update is None:
@@ -1873,10 +2075,6 @@ class DirectMaxFlux(VariationalPathOpt):
         v = np.asarray(norm_vels, dtype=np.float64)
         e = np.asarray(energies, dtype=np.float64)
 
-        # Replace non-finite energies with a large penalty so the line search backs off.
-        if not np.isfinite(e).all():
-            e = np.nan_to_num(e, nan=1.0e6, posinf=1.0e6, neginf=1.0e6)
-
         a = w * v  # quadrature weight × speed
         mask = (a > 0.0) & np.isfinite(a)
 
@@ -1905,8 +2103,7 @@ class DirectMaxFlux(VariationalPathOpt):
         log_action, _ = self._log_action_and_probs(self.energies, norm_vels)
 
         if not np.isfinite(log_action):
-            # Force IPOPT to backtrack (avoids "Invalid number" termination).
-            return 1.0e20
+            return np.nan
 
         return log_action / self.beta
 
@@ -1916,29 +2113,23 @@ class DirectMaxFlux(VariationalPathOpt):
         self._ensure_current_state()
 
         norm_vels = self._get_norm_vels()
-        grad_norm_vels = self._get_norm_vels(nu=1)
 
         log_action, p = self._log_action_and_probs(self.energies, norm_vels)
 
-        # Safety: if anything went wrong, return zeros instead of NaNs/Infs
+        # Invalid PES values must fail the solve, matching the NumPy backend.
         if (not np.isfinite(log_action)) or (not np.isfinite(p).all()):
-            return np.zeros((self.nbasis, self.natoms, 3), dtype=np.float64)
+            return np.full((self.nbasis, self.natoms, 3), np.nan, dtype=np.float64)
 
         # First term: (1/beta) * Σ (p_i/|ẋ_i|) * ∂|ẋ_i|/∂c
         v_safe = np.maximum(norm_vels, 1.0e-300)
         w1 = (p / v_safe) / self.beta
-        term1 = np.tensordot(w1, grad_norm_vels, axes=([0], [0]))
+        term1 = self._grad_norm_vels_weighted(w1)
 
         # Second term: Σ p_i * ∂E_i/∂c, assembled from forces and basis values
         forces = np.asarray(self.forces, dtype=np.float64)
-        if not np.isfinite(forces).all():
-            forces = np.nan_to_num(forces, nan=0.0, posinf=0.0, neginf=0.0)
-
         term2 = np.tensordot(self._P_eval[0] * p, forces, axes=([1], [0]))
 
         grad = term1 - term2
-        if not np.isfinite(grad).all():
-            grad = np.nan_to_num(grad, nan=0.0, posinf=0.0, neginf=0.0)
         return grad
 
 
@@ -1987,7 +2178,8 @@ class DirectMaxFlux(VariationalPathOpt):
                      alpha_du, alpha_pr, ls_trials)
 
         if self.update_teval:
-            self.history.t_eval.append(self.t_eval.copy())
+            if self.keep_history:
+                self.history.t_eval.append(self.t_eval.copy())
 
             polys,tmax,emax_interp = self.interpolate_energies()
 

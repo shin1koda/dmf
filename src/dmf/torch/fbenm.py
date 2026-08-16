@@ -1,3 +1,4 @@
+import threading
 from typing import Optional, Tuple, Union
 
 import numpy as np
@@ -14,6 +15,145 @@ from ._torch_config import _resolve_torch_device, _resolve_torch_dtype
 def _calc_dist_mat(pos, *, device, dtype) -> torch.Tensor:
     pos_t = torch.as_tensor(pos, dtype=dtype, device=device)
     return torch.cdist(pos_t,pos_t)
+
+
+def _actual_device(device) -> torch.device:
+    """Resolve a bare CUDA device to the indexed device used for allocation."""
+    resolved = torch.device(device)
+    if resolved.type == "cuda" and resolved.index is None:
+        return torch.device("cuda", torch.cuda.current_device())
+    return resolved
+
+
+class _SharedConstant(np.ndarray):
+    """Constant shared by every copy of a calculator, so it cannot be written."""
+
+    def __setitem__(self, key, value):
+        if not self.flags.writeable:
+            raise ValueError(
+                "This constant is shared with every copy of this calculator and "
+                "with its device cache, so it is read-only. Build a new "
+                "calculator to use different bounds or wall widths.")
+        super().__setitem__(key, value)
+
+
+def _readonly_view(array: np.ndarray) -> np.ndarray:
+    view = array.view(_SharedConstant)
+    view.setflags(write=False)
+    return view
+
+
+class _FBConstantsOnDevice:
+    """One device-resident copy of the FB-ENM constants, shared by a cache group.
+
+    A cache group is a calculator and the copies made from it: they share these
+    arrays, so one upload serves all of them.  Calculators built independently
+    have their own group, and therefore their own device copy.  Without this the
+    same four N x N matrices were re-uploaded on every force call.  The inverse
+    squared wall widths are stored rather than the widths, since only they are
+    read.
+
+    The device copy is dropped by ``FB_ENM.release_device_cache()``.  The host
+    constants are read-only because copies share both them and this holder;
+    construct a new calculator to use different bounds or wall widths.
+    """
+
+    __slots__ = ("d_min", "d_max", "delta_min", "delta_max", "_lock",
+                 "_key", "_d_min_t", "_d_max_t", "_inv_dmin2_t", "_inv_dmax2_t")
+
+    def __init__(self, d_min, d_max, delta_min, delta_max):
+        self.d_min = d_min
+        self.d_max = d_max
+        self.delta_min = delta_min
+        self.delta_max = delta_max
+        self._lock = threading.Lock()
+        self._key = None
+        self._d_min_t = None
+        self._d_max_t = None
+        self._inv_dmin2_t = None
+        self._inv_dmax2_t = None
+
+    # Device tensors and the lock are runtime state, not part of the value.
+    def __getstate__(self):
+        return {"d_min": self.d_min, "d_max": self.d_max,
+                "delta_min": self.delta_min, "delta_max": self.delta_max}
+
+    def __setstate__(self, state):
+        self.__init__(state["d_min"], state["d_max"],
+                      state["delta_min"], state["delta_max"])
+
+    @torch.no_grad()
+    def get(self, device, dtype):
+        device = _actual_device(device)
+        key = (device, dtype)
+        with self._lock:
+            if self._key != key or self._d_min_t is None:
+                # Drop a previous key before allocating its replacement so a
+                # dtype/device switch cannot transiently retain two 4 x N^2 sets.
+                self._key = None
+                self._d_min_t = None
+                self._d_max_t = None
+                self._inv_dmin2_t = None
+                self._inv_dmax2_t = None
+                d_min_t = torch.as_tensor(self.d_min, dtype=dtype, device=device)
+                d_max_t = torch.as_tensor(self.d_max, dtype=dtype, device=device)
+                # ``torch.tensor`` gives these writable storage even on CPU;
+                # they become the inverse-width cache in place.  On CUDA this
+                # is still one host-to-device transfer per source matrix.
+                inv_dmin2_t = torch.tensor(self.delta_min, dtype=dtype, device=device)
+                inv_dmax2_t = torch.tensor(self.delta_max, dtype=dtype, device=device)
+                inv_dmin2_t.square_().reciprocal_()
+                inv_dmax2_t.square_().reciprocal_()
+                self._d_min_t = d_min_t
+                self._d_max_t = d_max_t
+                self._inv_dmin2_t = inv_dmin2_t
+                self._inv_dmax2_t = inv_dmax2_t
+                self._key = key
+            return (self._d_min_t, self._d_max_t,
+                    self._inv_dmin2_t, self._inv_dmax2_t)
+
+    def release(self):
+        with self._lock:
+            self._key = None
+            self._d_min_t = None
+            self._d_max_t = None
+            self._inv_dmin2_t = None
+            self._inv_dmax2_t = None
+
+
+@torch.no_grad()
+def _adjacency_squared(J: torch.Tensor) -> torch.Tensor:
+    """``(J @ J) > 0`` for a boolean adjacency, without the dense product.
+
+    Marks the pairs sharing at least one common neighbor, i.e. the bond and angle
+    pairs.  A dense ``J @ J`` costs 2 N^3 flops, which dominates the FB-ENM setup
+    for large systems and is especially expensive in float64 on GPUs with a low
+    float64 rate, while a chemical adjacency has a handful of neighbors per atom.
+    This scatters each atom's neighbor list against itself instead,
+    O(N * maxdeg^2), and reproduces the thresholded product exactly.
+    """
+    n = J.shape[0]
+    e = torch.nonzero(J, as_tuple=False)
+    out = torch.zeros_like(J)
+    if e.numel() == 0:
+        return out
+
+    k, nb = e[:, 0], e[:, 1]
+    deg = torch.bincount(k, minlength=n)
+    maxdeg = int(deg.max())
+    start = torch.cumsum(deg, 0) - deg
+    pos = torch.arange(e.shape[0], device=J.device) - start[k]
+
+    nbr = torch.zeros((n, maxdeg), dtype=torch.long, device=J.device)
+    valid = torch.zeros((n, maxdeg), dtype=torch.bool, device=J.device)
+    nbr[k, pos] = nb
+    valid[k, pos] = True
+
+    for a in range(maxdeg):
+        for b in range(maxdeg):
+            m = valid[:, a] & valid[:, b]
+            out[nbr[m, a], nbr[m, b]] = True
+    return out
 
 
 class FB_ENM(Calculator):
@@ -69,20 +209,25 @@ class FB_ENM(Calculator):
         return_energy_mats: bool = False,
         device=None,
         dtype=None,
+        _copy_from=None,
     ):
         super().__init__()
 
+        if _copy_from is not None:
+            device = _copy_from.device
+            dtype = _copy_from.torch_dtype
         self.device = _resolve_torch_device(device)
         self.torch_dtype = _resolve_torch_dtype(dtype)
         self.np_dtype = np.float64
         self._return_energy_mats = bool(return_energy_mats)
-        # CUDA memory is typically the bottleneck for large systems.
-        # Keep constants cached on device only on CPU backend.
-        self._cache_constants_on_device = (self.device.type != "cuda")
-        self._d_min_t = None
-        self._d_max_t = None
-        self._delta_min_t = None
-        self._delta_max_t = None
+
+        if _copy_from is not None:
+            self.d_min = _copy_from.d_min
+            self.d_max = _copy_from.d_max
+            self.delta_min = _copy_from.delta_min
+            self.delta_max = _copy_from.delta_max
+            self._const = _copy_from._const
+            return
 
         def to_np(x) -> np.ndarray:
             if isinstance(x, torch.Tensor):
@@ -108,11 +253,23 @@ class FB_ENM(Calculator):
         np.fill_diagonal(delta_min_np, 1.0)
         np.fill_diagonal(delta_max_np, 1.0)
 
-        # Keep constants on CPU (NumPy) to minimize VRAM
-        self.d_min = d_min_np
-        self.d_max = d_max_np
-        self.delta_min = delta_min_np
-        self.delta_max = delta_max_np
+        # The holder keeps writable private sources so PyTorch can create CPU
+        # views without copying or warning.  Users see read-only views: copies
+        # share these constants, so mutation would invalidate every device copy.
+        self._const = _FBConstantsOnDevice(d_min_np, d_max_np, delta_min_np, delta_max_np)
+        self.d_min = _readonly_view(d_min_np)
+        self.d_max = _readonly_view(d_max_np)
+        self.delta_min = _readonly_view(delta_min_np)
+        self.delta_max = _readonly_view(delta_max_np)
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        # NumPy pickle does not preserve a view's writeable flag.  Reconnect the
+        # public views to the holder's canonical arrays and restore immutability.
+        self.d_min = _readonly_view(self._const.d_min)
+        self.d_max = _readonly_view(self._const.d_max)
+        self.delta_min = _readonly_view(self._const.delta_min)
+        self.delta_max = _readonly_view(self._const.delta_max)
 
     def copy(self):
         """
@@ -122,7 +279,10 @@ class FB_ENM(Calculator):
         -------
         FB_ENM
             A new calculator with the same flat-bottom bounds and wall-width
-            parameters.
+            parameters.  Results and atoms stay per instance; the four read-only
+            constant matrices and the device copy of them are shared with this
+            instance, so releasing the device cache through either one releases
+            both.
 
         """
         return FB_ENM(
@@ -133,44 +293,24 @@ class FB_ENM(Calculator):
             return_energy_mats=self._return_energy_mats,
             device=self.device,
             dtype=self.torch_dtype,
-        )
-
-    def _ensure_cached_constants(self):
-        if not self._cache_constants_on_device:
-            return
-        specs = (
-            ("_d_min_t", self.d_min),
-            ("_d_max_t", self.d_max),
-            ("_delta_min_t", self.delta_min),
-            ("_delta_max_t", self.delta_max),
-        )
-        for attr, arr in specs:
-            t = getattr(self, attr)
-            if (t is None) or (t.device != self.device) or (t.dtype != self.torch_dtype):
-                setattr(
-                    self,
-                    attr,
-                    torch.as_tensor(arr, dtype=self.torch_dtype, device=self.device),
-                )
-
-    def _get_constants_t(self):
-        if self._cache_constants_on_device:
-            self._ensure_cached_constants()
-            return self._d_min_t, self._d_max_t, self._delta_min_t, self._delta_max_t
-        return (
-            torch.as_tensor(self.d_min, dtype=self.torch_dtype, device=self.device),
-            torch.as_tensor(self.d_max, dtype=self.torch_dtype, device=self.device),
-            torch.as_tensor(self.delta_min, dtype=self.torch_dtype, device=self.device),
-            torch.as_tensor(self.delta_max, dtype=self.torch_dtype, device=self.device),
+            _copy_from=self,
         )
 
     def release_device_cache(self, empty_cache: bool = False):
-        self._d_min_t = None
-        self._d_max_t = None
-        self._delta_min_t = None
-        self._delta_max_t = None
+        """Drop the device copy of the constants.
+
+        Always releases; ``empty_cache`` additionally returns the freed blocks
+        from PyTorch's caching allocator to the driver, which is a separate
+        concern.
+        """
+        if self._const is not None:
+            self._const.release()
         if empty_cache and self.device.type == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    def _dmf_device_cache_key(self):
+        """Return the CUDA cache group used to coordinate path evaluation."""
+        return self._const if self.device.type == "cuda" else None
 
     @torch.no_grad()
     def calculate(self, atoms, properties, system_changes):
@@ -181,37 +321,53 @@ class FB_ENM(Calculator):
         pos_t = torch.as_tensor(pos, dtype=self.torch_dtype, device=self.device)
         d = torch.cdist(pos_t, pos_t)
 
-        d_min_t, d_max_t, delta_min_t, delta_max_t = self._get_constants_t()
+        d_min_t, d_max_t, inv_dmin2, inv_dmax2 = self._const.get(
+            self.device, self.torch_dtype)
 
         # 2) Flat-bottom penalties (Torch on device)
-        d_rep = torch.clamp(d - d_min_t, max=0.0)
-        d_att = torch.clamp(d - d_max_t, min=0.0)
+        d_rep = torch.sub(d, d_min_t)
+        d_rep.clamp_(max=0.0)
 
-        inv_dmin2 = 1.0 / (delta_min_t * delta_min_t)
-        inv_dmax2 = 1.0 / (delta_max_t * delta_max_t)
+        # Build the repulsive energy term before allocating the attractive
+        # distance and energy matrices.  The elementwise multiply is in place,
+        # so no third N x N expression temporary is created.
+        e_rep = torch.mul(d_rep, d_rep)
+        e_rep.mul_(inv_dmin2)
+
+        d_att = torch.sub(d, d_max_t)
+        d_att.clamp_(min=0.0)
+        e_att = torch.mul(d_att, d_att)
+        e_att.mul_(inv_dmax2)
 
         if self._return_energy_mats:
-            e_rep = (d_rep * d_rep) * inv_dmin2
-            e_att = (d_att * d_att) * inv_dmax2
             # symmetric matrix -> half to count each pair once
             energy = 0.5 * torch.sum(e_rep + e_att)
         else:
-            energy = 0.5 * torch.sum((d_rep * d_rep) * inv_dmin2 + (d_att * d_att) * inv_dmax2)
+            # Preserve the original elementwise-add-then-reduce order while
+            # reusing the repulsive energy buffer.
+            e_rep.add_(e_att)
+            energy = 0.5 * torch.sum(e_rep)
+            del e_rep, e_att
 
         # dE/dd  (up to a sign handled in force assembly)
-        f1 = 2.0 * (d_rep * inv_dmin2 + d_att * inv_dmax2)
+        d_rep.mul_(inv_dmin2)
+        d_att.mul_(inv_dmax2)
+        d_rep.add_(d_att).mul_(2.0)
+        f1 = d_rep
+        del d_att
 
         # 3) Forces (Torch on device)
         # Avoid divide-by-zero on diagonal; diagonal term is zero anyway.
         d.fill_diagonal_(1.0)
-        f1 = f1 / d
+        f1.div_(d)
         # Ensure exact zeros on diagonal
         f1.fill_diagonal_(0.0)
 
         # Vectorized assembly:
         # F_i = sum_j (f1_ij * (r_j - r_i))
         s = torch.sum(f1, dim=1)  # (N,)
-        forces = f1 @ pos_t - pos_t * s[:, None]  # (N,3)
+        forces = f1 @ pos_t
+        forces.sub_(pos_t * s[:, None])  # (N,3)
 
         self.results = {
             'energy': float(energy.item()),
@@ -223,7 +379,8 @@ class FB_ENM(Calculator):
             self.results['emat_att'] = e_att
         elif self.device.type == "cuda":
             # Drop large temporaries eagerly for large-N systems.
-            del d_min_t, d_max_t, delta_min_t, delta_max_t, d_rep, d_att, inv_dmin2, inv_dmax2, f1, s, forces, d, pos_t, energy
+            del d_min_t, d_max_t, inv_dmin2, inv_dmax2
+            del f1, s, forces, d, pos_t, energy
 
 
 
@@ -316,12 +473,15 @@ class FB_ENM_Bonds(FB_ENM):
         _tdt = self.torch_dtype
 
         numbers = images[0].arrays['numbers']
-        r_cov_np = covalent_radii[numbers][:,None]+covalent_radii[numbers]
-        r_vdw_np = vdw_radii[numbers][:,None]+vdw_radii[numbers]
-
-        r_cov = torch.as_tensor(r_cov_np,dtype=_tdt,device=_dev)
-        r_vdw = torch.as_tensor(r_vdw_np,dtype=_tdt,device=_dev)
-        bond_scale_t = torch.tensor(float(bond_scale),dtype=_tdt,device=_dev)
+        r_cov_atom = torch.as_tensor(
+            covalent_radii[numbers], dtype=_tdt, device=_dev
+        )
+        r_vdw_atom = torch.as_tensor(
+            vdw_radii[numbers], dtype=_tdt, device=_dev
+        )
+        r_cov = r_cov_atom[:, None] + r_cov_atom[None, :]
+        r_cov.mul_(float(bond_scale))
+        r_vdw = r_vdw_atom[:, None] + r_vdw_atom[None, :]
 
         natoms = len(images[0])
 
@@ -343,23 +503,22 @@ class FB_ENM_Bonds(FB_ENM):
         with torch.no_grad():
             for image in images:
                 d = _calc_dist_mat(image.get_positions(), device=self.device, dtype=self.torch_dtype)
-                J = (d/r_cov)<bond_scale_t
-                J_t = J.to(_tdt)
-                A = (J_t@J_t)>0
-                del J, J_t
+                J = d < r_cov
+                A = _adjacency_squared(J)
+                del J
 
                 if fix_planes:
-                    A = A|addA_p
+                    A.logical_or_(addA_p)
                 if addA_mask is not None:
-                    A = A|addA_mask
+                    A.logical_or_(addA_mask)
                 if delA_mask is not None:
-                    A = A&(~delA_mask)
+                    A.logical_and_(~delA_mask)
 
                 cand_min = torch.where(A,d,torch.minimum(d,r_vdw))
                 cand_max = torch.where(A,d,2.0*torch.amax(d))
                 del d, A
-                d_min = torch.minimum(d_min,cand_min)
-                d_max = torch.maximum(d_max,cand_max)
+                torch.minimum(d_min, cand_min, out=d_min)
+                torch.maximum(d_max, cand_max, out=d_max)
                 del cand_min, cand_max
 
             if (d_min_overwrite is not None) and (A_overwrite is not None):
@@ -369,7 +528,7 @@ class FB_ENM_Bonds(FB_ENM):
                 mask = torch.as_tensor(A_overwrite,dtype=torch.bool,device=_dev)
                 d_max = torch.where(mask,torch.as_tensor(d_max_overwrite,dtype=_tdt,device=_dev),d_max)
 
-        del numbers, r_cov_np, r_vdw_np, r_cov, r_vdw, bond_scale_t, natoms, addA_p, addA_mask, delA_mask
+        del numbers, r_cov_atom, r_vdw_atom, r_cov, r_vdw, natoms, addA_p, addA_mask, delA_mask
         super().__init__(d_min, d_max, delta_scale=delta_scale, device=device, dtype=self.torch_dtype)
         del d_min, d_max
 
@@ -467,9 +626,13 @@ class CFB_ENM(Calculator):
         remove_fourmembered: bool = True,
         device=None,
         dtype=None,
+        _copy_from=None,
     ):
 
         Calculator.__init__(self)
+        if _copy_from is not None:
+            device = _copy_from.device
+            dtype = _copy_from.torch_dtype
         self.device = _resolve_torch_device(device)
         self.torch_dtype = _resolve_torch_dtype(dtype)
         self.np_dtype = np.float64
@@ -479,7 +642,15 @@ class CFB_ENM(Calculator):
         need_bond = d_bond is None
         need_quartets = quartets is None
 
-        if need_bond or need_quartets:
+        if _copy_from is not None:
+            self.d_bond = _copy_from.d_bond
+            self.d_corr0 = _copy_from.d_corr0
+            self.d_corr1 = _copy_from.d_corr1
+            self.d_corr2 = _copy_from.d_corr2
+            self.quartets = [list(q) for q in _copy_from.quartets]
+            self.eps = _copy_from.eps
+            natoms = self.d_bond.shape[0]
+        elif need_bond or need_quartets:
             if images is None:
                 raise ValueError("images are required when d_bond or quartets are not provided.")
 
@@ -489,25 +660,39 @@ class CFB_ENM(Calculator):
             bond_scale_t = torch.tensor(float(bond_scale), dtype=_tdt, device=_dev)
 
             natoms = len(images[0])
-            d_bonds = torch.zeros([len(images), natoms, natoms], dtype=_tdt, device=_dev)
-            Js = []
+            # A running maximum rather than an (nimages, N, N) stack, since only
+            # the maximum over images is used.  Likewise only the first and last
+            # image's adjacency enters the quartet search, so the intermediate
+            # ones are not retained.
+            d_bond_max = None
+            J_first = None
+            J_last = None
             with torch.no_grad():
                 for i, image in enumerate(images):
                     d = _calc_dist_mat(image.get_positions(), device=self.device, dtype=self.torch_dtype)
                     J = (d / r_cov_t) < bond_scale_t
                     J.fill_diagonal_(False)
-                    Js.append(J)
-                    d_bonds[i] = torch.where(J, d, torch.zeros_like(d))
+                    if i == 0:
+                        J_first = J
+                    J_last = J
+                    d_masked = torch.where(J, d, torch.zeros_like(d))
+                    if d_bond_max is None:
+                        d_bond_max = d_masked
+                    else:
+                        d_bond_max = torch.maximum(d_bond_max, d_masked)
+                        del d_masked
+                    del d
 
             if need_bond:
-                self.d_bond = torch.max(d_bonds, dim=0).values.cpu().numpy()
+                self.d_bond = d_bond_max.cpu().numpy()
             else:
                 self.d_bond = np.asarray(d_bond, dtype=self.np_dtype).copy()
+            del d_bond_max
 
             if need_quartets:
-                J_only_r = Js[0] & (~Js[-1])
-                J_only_p = Js[-1] & (~Js[0])
-                J_both = Js[0] & Js[-1]
+                J_only_r = J_first & (~J_last)
+                J_only_p = J_last & (~J_first)
+                J_both = J_first & J_last
                 self.quartets = self._get_quartets(
                     J_only_r,
                     J_only_p,
@@ -523,28 +708,31 @@ class CFB_ENM(Calculator):
             self.quartets = [list(map(int, q)) for q in quartets]
             natoms = self.d_bond.shape[0]
 
-        if d_corr0 is not None:
-            self.d_corr0 = np.asarray(d_corr0, dtype=self.np_dtype).copy()
-        else:
-            self.d_corr0 = corr0_scale * self.d_bond
+        if _copy_from is None:
+            if d_corr0 is not None:
+                self.d_corr0 = np.asarray(d_corr0, dtype=self.np_dtype).copy()
+            else:
+                self.d_corr0 = corr0_scale * self.d_bond
 
-        if d_corr1 is not None:
-            self.d_corr1 = np.asarray(d_corr1, dtype=self.np_dtype).copy()
-        else:
-            self.d_corr1 = corr1_scale * self.d_bond
+            if d_corr1 is not None:
+                self.d_corr1 = np.asarray(d_corr1, dtype=self.np_dtype).copy()
+            else:
+                self.d_corr1 = corr1_scale * self.d_bond
 
-        if d_corr2 is not None:
-            self.d_corr2 = np.asarray(d_corr2, dtype=self.np_dtype).copy()
-        else:
-            self.d_corr2 = corr2_scale * self.d_bond
+            if d_corr2 is not None:
+                self.d_corr2 = np.asarray(d_corr2, dtype=self.np_dtype).copy()
+            else:
+                self.d_corr2 = corr2_scale * self.d_bond
 
-        self.eps = eps
+            self.eps = eps
 
-        I = np.identity(natoms, dtype="bool")
-        self.d_bond[I] = 0.0
-        self.d_corr0[I] = 0.0
-        self.d_corr1[I] = 0.0
-        self.d_corr2[I] = 0.0
+            # Shared constants arrive with this already applied, and the mask is
+            # an N x N boolean array.
+            I = np.identity(natoms, dtype="bool")
+            self.d_bond[I] = 0.0
+            self.d_corr0[I] = 0.0
+            self.d_corr1[I] = 0.0
+            self.d_corr2[I] = 0.0
 
         if self.quartets:
             q_np = np.asarray(self.quartets, dtype=np.int64)
@@ -586,9 +774,22 @@ class CFB_ENM(Calculator):
             self._d20_kl_t = torch.zeros((0,), dtype=_tdt, device=_dev)
             self._dnm_t = torch.zeros((0,), dtype=_tdt, device=_dev)
 
+        self.d_bond = _readonly_view(self.d_bond)
+        self.d_corr0 = _readonly_view(self.d_corr0)
+        self.d_corr1 = _readonly_view(self.d_corr1)
+        self.d_corr2 = _readonly_view(self.d_corr2)
+
     def release_device_cache(self, empty_cache: bool = False):
+        """No device copy is held here; ``empty_cache`` is an allocator action only."""
         if empty_cache and self.device.type == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.d_bond = _readonly_view(self.d_bond)
+        self.d_corr0 = _readonly_view(self.d_corr0)
+        self.d_corr1 = _readonly_view(self.d_corr1)
+        self.d_corr2 = _readonly_view(self.d_corr2)
 
     def copy(self, images=None):
         """
@@ -604,31 +805,24 @@ class CFB_ENM(Calculator):
         -------
         CFB_ENM
             A new ``CFB_ENM`` instance with the same correlation parameters and
-            quartet list.
+            quartet list.  Results and atoms stay per instance; the four
+            read-only constant matrices are shared with this instance.
 
         """
         return type(self)(
             images=images,
-            d_bond=self.d_bond,
-            d_corr0=self.d_corr0,
-            d_corr1=self.d_corr1,
-            d_corr2=self.d_corr2,
-            eps=self.eps,
-            quartets=self.quartets,
-            device=self.device,
-            dtype=self.torch_dtype,
+            _copy_from=self,
         )
 
     def _get_quartets(self,J_only_r,J_only_p,J_both,
             pivotal=True,single=True,remove_fourmembered=True):
 
         if isinstance(J_both,torch.Tensor):
-            J_both_t = J_both.to(dtype=self.torch_dtype)
+            J_both_b = J_both.to(dtype=torch.bool)
         else:
-            J_both_t = torch.as_tensor(J_both, dtype=self.torch_dtype, device=self.device)
-        J2 = (J_both_t @ J_both_t) > 0
-        J2 = J2.cpu().numpy()
-        del J_both_t
+            J_both_b = torch.as_tensor(np.asarray(J_both, dtype=bool), device=self.device)
+        J2 = _adjacency_squared(J_both_b).cpu().numpy()
+        del J_both_b
 
         J_only_r = J_only_r.cpu().numpy() if isinstance(J_only_r,torch.Tensor) else np.asarray(J_only_r,bool)
         J_only_p = J_only_p.cpu().numpy() if isinstance(J_only_p,torch.Tensor) else np.asarray(J_only_p,bool)
@@ -867,9 +1061,11 @@ def _get_planes(images, bond_scale=1.25, tol_rmsd=0.05, tol_ang=10.0, *, device=
         d = _calc_dist_mat(pos, device=device, dtype=torch_dtype)
         A = (d/r_cov)<bond_scale_t
         A.fill_diagonal_(False)
-        nghs = []
-        for row in A:
-            nghs.append(row.nonzero(as_tuple=False).squeeze(1).cpu().tolist())
+        # One transfer for the whole adjacency, then split it per row on the host:
+        # a row-by-row `.cpu().tolist()` costs one device synchronization per atom.
+        rows, cols = np.nonzero(A.cpu().numpy())
+        bounds = np.searchsorted(rows, np.arange(len(atoms) + 1))
+        nghs = [cols[bounds[i]:bounds[i + 1]].tolist() for i in range(len(atoms))]
 
         if iimg==0:
             path = []
