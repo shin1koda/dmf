@@ -121,13 +121,13 @@ For more details, please refer to the [API documentation](https://shin1koda.gith
 Please cite:
 
  - Ref. 1 when you use this package
- - Ref. 2 when you use the Direct MaxFlux method for reaction-path optimization or transition-state searches
+ - Ref. 2 when you use the direct MaxFlux method for reaction-path optimization or transition-state searches
  - Ref. 3 when you use the flat-bottom elastic network model
  - Ref. 4 when you use the correlated flat-bottom elastic network model (enabled by default in PyDMF)
 
 For example:
 
-> Transition-state searches were performed using **PyDMF** [1], employing the **Direct MaxFlux** method [2] with the **flat-bottom elastic network model** [3,4] and DFT at the B3LYP/def2-SVP level [appropriate references] as potential-energy models.
+> Transition-state searches were performed using **PyDMF** [1], employing the **direct MaxFlux** method [2] with the **flat-bottom elastic network model** [3,4] and DFT at the B3LYP/def2-SVP level [appropriate references] as potential-energy models.
 
 
 
