@@ -127,8 +127,7 @@ Please cite:
 
 For example:
 
-> Transition-state searches were performed using **PyDMF** [1], employing the **direct MaxFlux** method [2] with the **flat-bottom elastic network model** [3,4] and DFT at the B3LYP/def2-SVP level [appropriate references] as potential-energy models.
-
+> Transition-state searches were performed using PyDMF [1] for reaction-path optimization and SoftwareA for DFT calculations. The Direct MaxFlux method [2] in PyDMF employed two potential-energy models: the flat-bottom elastic network model [3,4] implemented in PyDMF for initial-path generation and DFT evaluated with SoftwareA for obtaining approximate transition-state structures. These structures were further refined using SoftwareA. All DFT calculations were performed at ... (description of the calculation level).
 
 
 ## Related works
