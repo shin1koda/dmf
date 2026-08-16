@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/source/_static/pydmf-logo.png" alt="PyDMF logo" width="400">
+</p>
+
 # PyDMF: A Python package for double-ended reaction path/transition state optimization
 
 ![CI](https://github.com/shin1koda/dmf/actions/workflows/tests.yml/badge.svg)
@@ -108,15 +112,23 @@ For more details, please refer to the [API documentation](https://shin1koda.gith
 
 ## Citation
 
+ 1. S.-i. Koda and  S. Saito, PyDMF: A Python package for variational double-ended reaction-path and transition-state optimization, J. Open Source Softw. 11, 10379 (2026). [doi: 10.21105/joss.10379](https://doi.org/10.21105/joss.10379)
  1. S.-i. Koda and  S. Saito, Locating Transition States by Variational Reaction Path Optimization with an Energy-Derivative-Free Objective Function, JCTC, 20, 2798–2811 (2024). [doi: 10.1021/acs.jctc.3c01246](https://doi.org/10.1021/acs.jctc.3c01246)
  1. S.-i. Koda and  S. Saito, Flat-bottom Elastic Network Model for Generating Improved Plausible Reaction Paths, JCTC, 20, 7176−7187 (2024). [doi: 10.1021/acs.jctc.4c00792](https://doi.org/10.1021/acs.jctc.4c00792)
  1. S.-i. Koda and  S. Saito, Correlated Flat-bottom Elastic Network Model for Improved Bond Rearrangement in Reaction Paths, JCTC, 21, 3513−3522 (2025). [doi: 10.1021/acs.jctc.4c01549](https://doi.org/10.1021/acs.jctc.4c01549)
 
+
 Please cite:
 
- - Ref. 1 when you use the direct MaxFlux method
- - Ref. 2 when you use the flat-bottom elastic network model
- - Ref. 3 when you use the correlated flat-bottom elastic network model
+ - Ref. 1 when you use this package
+ - Ref. 2 when you use the Direct MaxFlux method for reaction-path optimization or transition-state searches
+ - Ref. 3 when you use the flat-bottom elastic network model
+ - Ref. 4 when you use the correlated flat-bottom elastic network model (enabled by default in PyDMF)
+
+For example:
+
+> Transition-state searches were performed using **PyDMF** [1], employing the **Direct MaxFlux** method [2] with the **flat-bottom elastic network model** [3,4] and DFT at the B3LYP/def2-SVP level [appropriate references] as potential-energy models.
+
 
 
 ## Related works
